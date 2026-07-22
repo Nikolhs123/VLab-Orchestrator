@@ -1,0 +1,3 @@
+﻿UserId,RequestCount,GrantCount,ReleaseCount,TimeoutCount,IsWaiting,IsUsingInstrument,TotalWaitSeconds,LastWaitSeconds,TotalUsageSeconds,LastUsageSeconds
+"Actor_1",5,5,5,0,False,False,0.0010159,0,25.5401982,5.1337386
+"Actor_2",5,5,5,0,False,False,25.0780282,5.0168306,25.6805518,5.1244501

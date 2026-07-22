@@ -1,0 +1,1 @@
+﻿run_id,backend,scenario_id,timestamp_utc,mode,provider,trigger,instrument_id,requesting_user_id,current_holder_user_id,queue_snapshot,baseline_decision_type,baseline_granted_user_id,ai_action,recommended_user_id,confidence,latency_ms,valid,fallback_used,accepted_for_control,explanation

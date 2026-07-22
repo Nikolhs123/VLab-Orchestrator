@@ -1,0 +1,2 @@
+﻿InstrumentId,RequestCount,GrantCount,ReleaseCount,TimeoutCount,IsCurrentlyInUse,CurrentHolderUserId,TotalUsageSeconds,LastUsageSeconds
+"shared_softwarexsharedinstrument",20,20,20,0,False,"",53.4826951,2.5581652

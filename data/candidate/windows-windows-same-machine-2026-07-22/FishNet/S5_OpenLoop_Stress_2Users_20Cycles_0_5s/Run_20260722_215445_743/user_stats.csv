@@ -1,0 +1,3 @@
+﻿UserId,RequestCount,GrantCount,ReleaseCount,TimeoutCount,IsWaiting,IsUsingInstrument,TotalWaitSeconds,LastWaitSeconds,TotalUsageSeconds,LastUsageSeconds
+"Client_0",20,20,20,0,False,False,2.9718712,0.166628,7.1299069,0.333398
+"Client_1",20,20,20,0,False,False,0,0,10.1025101,0.4997997

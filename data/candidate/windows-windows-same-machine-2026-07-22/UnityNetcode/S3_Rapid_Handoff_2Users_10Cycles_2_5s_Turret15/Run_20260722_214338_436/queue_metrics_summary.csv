@@ -1,0 +1,2 @@
+﻿run_id,backend,scenario_id,request_count,queued_count,granted_count,released_count,timeout_released_count,timeout_granted_next_count,invalid_decision_count,removed_from_queue_count,mean_grant_delay_ms,median_grant_delay_ms,stddev_grant_delay_ms,mean_wait_duration_ms,median_wait_duration_ms,stddev_wait_duration_ms,max_wait_duration_ms
+"UnityNetcode_S3_Rapid_Handoff_2Users_10Cycles_2_5s_Turret15_20260722_214338_436","UnityNetcode","S3_Rapid_Handoff_2Users_10Cycles_2_5s_Turret15",20,19,20,20,0,0,0,0,2401.1208,2510.0262,550.7625,2401.1208,2510.0262,550.7625,2566.5203

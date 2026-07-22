@@ -1,0 +1,2 @@
+﻿run_id,backend,scenario_id,distinct_users,mean_wait_per_user_ms,stddev_wait_per_user_ms,max_user_wait_ms,jains_fairness_index_wait
+"FishNet_S5_OpenLoop_Stress_2Users_20Cycles_0_5s_20260722_215445_743","FishNet","S5_OpenLoop_Stress_2Users_20Cycles_0_5s",1,148.8710,0.0000,148.8710,1.0000

@@ -1,0 +1,2 @@
+﻿run_id,backend,scenario_id,distinct_users,mean_wait_per_user_ms,stddev_wait_per_user_ms,max_user_wait_ms,jains_fairness_index_wait
+"PUN2_S5_OpenLoop_Stress_2Users_20Cycles_0_5s_20260722_212803_000","PUN2","S5_OpenLoop_Stress_2Users_20Cycles_0_5s",2,1.0993,0.5882,1.6874,0.7774

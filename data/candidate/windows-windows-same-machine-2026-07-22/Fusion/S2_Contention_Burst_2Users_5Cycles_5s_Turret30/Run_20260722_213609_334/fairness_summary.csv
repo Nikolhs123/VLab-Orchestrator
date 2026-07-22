@@ -1,0 +1,2 @@
+﻿run_id,backend,scenario_id,distinct_users,mean_wait_per_user_ms,stddev_wait_per_user_ms,max_user_wait_ms,jains_fairness_index_wait
+"Fusion_S2_Contention_Burst_2Users_5Cycles_5s_Turret30_20260722_213609_334","Fusion","S2_Contention_Burst_2Users_5Cycles_5s_Turret30",2,2507.1529,2504.1308,5011.2836,0.5006

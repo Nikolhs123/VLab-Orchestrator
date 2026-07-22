@@ -1,0 +1,2 @@
+﻿run_id,backend,scenario_id,transfer_count,successful_transfers,failed_transfers,success_rate,mean_transfer_latency_ms,median_transfer_latency_ms,stddev_transfer_latency_ms
+"Fusion_S5_OpenLoop_Stress_2Users_20Cycles_0_5s_20260722_213919_088","Fusion","S5_OpenLoop_Stress_2Users_20Cycles_0_5s",19,19,0,1.0000,119.5092,122.9553,8.6153

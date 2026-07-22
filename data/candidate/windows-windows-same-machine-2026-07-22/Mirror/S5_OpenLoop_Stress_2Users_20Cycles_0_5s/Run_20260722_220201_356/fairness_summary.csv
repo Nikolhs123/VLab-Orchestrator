@@ -1,0 +1,2 @@
+﻿run_id,backend,scenario_id,distinct_users,mean_wait_per_user_ms,stddev_wait_per_user_ms,max_user_wait_ms,jains_fairness_index_wait
+"Mirror_S5_OpenLoop_Stress_2Users_20Cycles_0_5s_20260722_220201_356","Mirror","S5_OpenLoop_Stress_2Users_20Cycles_0_5s",2,6.8318,6.0739,12.9057,0.5585

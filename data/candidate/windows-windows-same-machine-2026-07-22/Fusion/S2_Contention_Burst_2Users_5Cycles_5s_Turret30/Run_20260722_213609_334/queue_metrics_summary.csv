@@ -1,0 +1,2 @@
+﻿run_id,backend,scenario_id,request_count,queued_count,granted_count,released_count,timeout_released_count,timeout_granted_next_count,invalid_decision_count,removed_from_queue_count,mean_grant_delay_ms,median_grant_delay_ms,stddev_grant_delay_ms,mean_wait_duration_ms,median_wait_duration_ms,stddev_wait_duration_ms,max_wait_duration_ms
+"Fusion_S2_Contention_Burst_2Users_5Cycles_5s_Turret30_20260722_213609_334","Fusion","S2_Contention_Burst_2Users_5Cycles_5s_Turret30",10,5,10,10,0,0,0,0,4176.5734,5008.5604,1866.4719,4176.5734,5008.5604,1866.4719,5017.0039

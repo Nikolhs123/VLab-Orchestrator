@@ -1,0 +1,2 @@
+﻿run_id,backend,scenario_id,request_count,queued_count,granted_count,released_count,timeout_released_count,timeout_granted_next_count,invalid_decision_count,removed_from_queue_count,mean_grant_delay_ms,median_grant_delay_ms,stddev_grant_delay_ms,mean_wait_duration_ms,median_wait_duration_ms,stddev_wait_duration_ms,max_wait_duration_ms
+"FishNet_S1_Baseline_FCFS_2Users_3Cycles_10s_Turret60_20260722_214749_310","FishNet","S1_Baseline_FCFS_2Users_3Cycles_10s_Turret60",6,5,6,6,0,0,0,0,8374.1919,10008.6986,3744.2380,8374.1919,10008.6986,3744.2380,10142.2589

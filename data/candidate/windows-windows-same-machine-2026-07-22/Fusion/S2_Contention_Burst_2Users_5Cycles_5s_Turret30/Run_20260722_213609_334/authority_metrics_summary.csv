@@ -1,0 +1,2 @@
+﻿run_id,backend,scenario_id,transfer_count,successful_transfers,failed_transfers,success_rate,mean_transfer_latency_ms,median_transfer_latency_ms,stddev_transfer_latency_ms
+"Fusion_S2_Contention_Burst_2Users_5Cycles_5s_Turret30_20260722_213609_334","Fusion","S2_Contention_Burst_2Users_5Cycles_5s_Turret30",4,4,0,1.0000,114.3066,111.9639,6.8660

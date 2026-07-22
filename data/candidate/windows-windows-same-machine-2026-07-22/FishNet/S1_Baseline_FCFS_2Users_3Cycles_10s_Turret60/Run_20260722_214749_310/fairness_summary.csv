@@ -1,0 +1,2 @@
+﻿run_id,backend,scenario_id,distinct_users,mean_wait_per_user_ms,stddev_wait_per_user_ms,max_user_wait_ms,jains_fairness_index_wait
+"FishNet_S1_Baseline_FCFS_2Users_3Cycles_10s_Turret60_20260722_214749_310","FishNet","S1_Baseline_FCFS_2Users_3Cycles_10s_Turret60",2,8374.1919,1634.2559,10008.4477,0.9633

@@ -1,0 +1,2 @@
+﻿run_id,backend,scenario_id,transfer_count,successful_transfers,failed_transfers,success_rate,mean_transfer_latency_ms,median_transfer_latency_ms,stddev_transfer_latency_ms
+"Mirror_S5_OpenLoop_Stress_2Users_20Cycles_0_5s_20260722_220201_356","Mirror","S5_OpenLoop_Stress_2Users_20Cycles_0_5s",38,38,0,1.0000,14.7552,15.1927,7.1347

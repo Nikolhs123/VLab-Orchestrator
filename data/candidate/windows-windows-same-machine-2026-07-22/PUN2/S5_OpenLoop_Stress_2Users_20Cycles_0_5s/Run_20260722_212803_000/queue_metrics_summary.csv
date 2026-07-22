@@ -1,0 +1,2 @@
+﻿run_id,backend,scenario_id,request_count,queued_count,granted_count,released_count,timeout_released_count,timeout_granted_next_count,invalid_decision_count,removed_from_queue_count,mean_grant_delay_ms,median_grant_delay_ms,stddev_grant_delay_ms,mean_wait_duration_ms,median_wait_duration_ms,stddev_wait_duration_ms,max_wait_duration_ms
+"PUN2_S5_OpenLoop_Stress_2Users_20Cycles_0_5s_20260722_212803_000","PUN2","S5_OpenLoop_Stress_2Users_20Cycles_0_5s",40,0,40,40,0,0,0,0,1.3934,0.7660,1.2545,1.3934,0.7660,1.2545,3.5358

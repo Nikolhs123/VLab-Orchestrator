@@ -1,0 +1,2 @@
+﻿run_id,backend,scenario_id,distinct_users,mean_wait_per_user_ms,stddev_wait_per_user_ms,max_user_wait_ms,jains_fairness_index_wait
+"UnityNetcode_S1_Baseline_FCFS_2Users_3Cycles_10s_Turret60_20260722_214040_350","UnityNetcode","S1_Baseline_FCFS_2Users_3Cycles_10s_Turret60",2,8356.3249,1652.7163,10009.0411,0.9624

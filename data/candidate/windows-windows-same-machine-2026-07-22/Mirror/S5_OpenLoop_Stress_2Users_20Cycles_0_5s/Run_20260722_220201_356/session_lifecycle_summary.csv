@@ -1,0 +1,2 @@
+﻿run_id,backend,scenario_id,client_count,mean_connect_latency_ms,median_connect_latency_ms,stddev_connect_latency_ms,mean_create_latency_ms,median_create_latency_ms,stddev_create_latency_ms,mean_join_latency_ms,median_join_latency_ms,stddev_join_latency_ms,mean_session_start_visible_delay_ms,median_session_start_visible_delay_ms,stddev_session_start_visible_delay_ms
+"Mirror_S5_OpenLoop_Stress_2Users_20Cycles_0_5s_20260722_220201_356","Mirror","S5_OpenLoop_Stress_2Users_20Cycles_0_5s",2,0.9966,0.9966,0.5026,65.9064,65.9064,0.0000,81.2380,81.2380,0.0000,7.0438,7.0438,0.0000

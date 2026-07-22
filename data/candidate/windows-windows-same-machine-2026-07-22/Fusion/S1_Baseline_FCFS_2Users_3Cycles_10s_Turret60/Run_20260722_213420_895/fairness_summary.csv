@@ -1,0 +1,2 @@
+﻿run_id,backend,scenario_id,distinct_users,mean_wait_per_user_ms,stddev_wait_per_user_ms,max_user_wait_ms,jains_fairness_index_wait
+"Fusion_S1_Baseline_FCFS_2Users_3Cycles_10s_Turret60_20260722_213420_895","Fusion","S1_Baseline_FCFS_2Users_3Cycles_10s_Turret60",2,8414.0123,1593.4746,10007.4869,0.9654
