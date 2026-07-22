@@ -1,0 +1,512 @@
+using System;
+using System.Collections.Generic;
+using System.Linq;
+using Thesis.Orchestration.SharedSync;
+using Thesis.Orchestration.Telemetry;
+using Unity.Netcode;
+using Unity.Netcode.Transports.UTP;
+using UnityEngine;
+
+namespace Thesis.Orchestration.Backends.Netcode
+{
+    public class SessionOrchestratorNetcode : MonoBehaviour
+    {
+        public static SessionOrchestratorNetcode Instance { get; private set; }
+
+        [Header("Netcode Settings")]
+        [SerializeField] private Unity.Netcode.NetworkManager networkManager;
+        [SerializeField] private UnityTransport unityTransport;
+        [SerializeField] private SessionQueueRuntimeNetcode queueRuntimeTemplate;
+        [SerializeField] private bool autoConnectOnStart = true;
+        [SerializeField] private string connectAddress = "127.0.0.1";
+        [SerializeField] private string serverListenAddress = "0.0.0.0";
+        [SerializeField] private ushort basePort = 7777;
+        [SerializeField] private ushort portRange = 500;
+        [SerializeField] private int maxPlayersPerSession = 8;
+        [SerializeField] private string defaultSessionName = "DefaultSession";
+        [SerializeField] private bool spawnQueueRuntimeAutomatically = true;
+        [SerializeField] private bool verboseLogs = true;
+
+        private readonly List<ulong> cachedPlayers = new();
+        private readonly List<string> cachedSessions = new();
+
+        private bool callbacksBound;
+        private bool transportPrepared;
+        private bool localSessionStarted;
+        private bool hasAutoConnectAttempted;
+        private bool hasReportedMissingRuntimeReferences;
+        private string currentSessionName = "None";
+        private SessionQueueRuntimeNetcode spawnedQueueRuntime;
+
+        public Unity.Netcode.NetworkManager NetworkManager => networkManager;
+        public bool IsConnectedToMasterServer => transportPrepared || (networkManager != null && networkManager.IsListening);
+        public bool IsInRoom => networkManager != null && networkManager.IsListening;
+        public bool IsMasterClient => networkManager != null && networkManager.IsListening && networkManager.LocalClientId == Unity.Netcode.NetworkManager.ServerClientId;
+
+        public bool SessionStarted
+        {
+            get
+            {
+                SessionQueueRuntimeNetcode runtime = SessionQueueRuntimeNetcode.Instance;
+                if (runtime != null && runtime.IsSpawned)
+                    return runtime.SessionStarted;
+
+                return localSessionStarted;
+            }
+        }
+
+        public string CurrentRoomName => currentSessionName;
+        public IReadOnlyList<ulong> CurrentPlayers => cachedPlayers;
+        public IReadOnlyList<string> AvailableSessions => cachedSessions;
+
+        public event Action OnConnectedToServerEvent;
+        public event Action<string> OnConnectionFailed;
+        public event Action<string> OnRoomCreated;
+        public event Action<string> OnRoomJoined;
+        public event Action<List<ulong>> OnPlayerListUpdated;
+        public event Action<bool> OnSessionStateChanged;
+        public event Action<string> OnStatusMessage;
+        public event Action<List<string>> OnSessionBrowserUpdated;
+
+        private void Awake()
+        {
+            if (Instance != null && Instance != this)
+            {
+                Destroy(gameObject);
+                return;
+            }
+
+            Instance = this;
+            ResolveReferences();
+        }
+
+        private void OnEnable()
+        {
+            ResolveReferences();
+            TryBindCallbacks();
+        }
+
+        private void Start()
+        {
+            if (!autoConnectOnStart || hasAutoConnectAttempted)
+                return;
+
+            hasAutoConnectAttempted = true;
+            ConnectToServer();
+        }
+
+        private void Update()
+        {
+            ResolveReferences();
+            TryBindCallbacks();
+            RegisterQueueRuntimePrefabIfNeeded();
+
+            bool started = SessionStarted;
+            if (started == localSessionStarted)
+                return;
+
+            localSessionStarted = started;
+            OnSessionStateChanged?.Invoke(localSessionStarted);
+        }
+
+        private void OnDisable()
+        {
+            UnbindCallbacks();
+        }
+
+        private void OnDestroy()
+        {
+            if (networkManager != null && networkManager.IsServer)
+                SessionQueueRuntimeNetcode.Instance?.TryForceReleaseCurrentHolderForFinalization("Runtime cleanup");
+            UnbindCallbacks();
+
+            if (Instance == this)
+                Instance = null;
+        }
+
+        public void ConnectToServer()
+        {
+            if (!ResolveReferences())
+                return;
+
+            SessionLifecycleTracker.Instance?.MarkConnectStarted(GetLocalUserId());
+
+            transportPrepared = true;
+            cachedSessions.Clear();
+            NetworkAvatarSpawnerNetcode.Instance?.RegisterSharedAvatarPrefabIfNeeded();
+            RegisterQueueRuntimePrefabIfNeeded();
+
+            RaiseStatus("Netcode transport prepared. Direct-connect mode ready. Enter the room name manually to create or join.");
+            OnConnectedToServerEvent?.Invoke();
+            OnSessionBrowserUpdated?.Invoke(new List<string>(cachedSessions));
+            SessionLifecycleTracker.Instance?.MarkConnectSucceeded(GetLocalUserId());
+            TLog("ConnectRequested", GetLocalUserId(), "None", "Prepared NGO direct-connect transport.");
+        }
+
+        public void CreateRoom(string roomName)
+        {
+            if (!ResolveReferences())
+                return;
+
+            string sessionName = string.IsNullOrWhiteSpace(roomName) ? defaultSessionName : roomName.Trim();
+            if (string.IsNullOrWhiteSpace(sessionName))
+            {
+                RaiseFailure("Cannot create Netcode session: empty room name.");
+                return;
+            }
+
+            if (networkManager.IsServer || networkManager.IsClient)
+            {
+                RaiseFailure("Cannot create Netcode session: already running a client or host.");
+                return;
+            }
+
+            ushort port = SessionNameToPort(sessionName);
+            unityTransport.SetConnectionData(serverListenAddress, port, "0.0.0.0");
+            NetworkAvatarSpawnerNetcode.Instance?.RegisterSharedAvatarPrefabIfNeeded();
+            RegisterQueueRuntimePrefabIfNeeded();
+
+            SessionLifecycleTracker.Instance?.MarkCreateStarted(GetLocalUserId());
+
+            if (!networkManager.StartHost())
+            {
+                RaiseFailure($"Failed to create Netcode session '{sessionName}' on port {port}.");
+                return;
+            }
+
+            transportPrepared = true;
+            currentSessionName = sessionName;
+            cachedSessions.Clear();
+            RefreshPlayerCache();
+            EnsureQueueRuntimeSpawned();
+
+            RaiseStatus($"Created Netcode session '{sessionName}' on port {port}.");
+            OnRoomCreated?.Invoke(sessionName);
+            OnSessionBrowserUpdated?.Invoke(new List<string>(cachedSessions));
+            SessionLifecycleTracker.Instance?.MarkCreateSucceeded(GetLocalUserId());
+            TLog("CreateRoomRequested", GetLocalUserId(), sessionName, $"Created direct-connect NGO session on port {port}.");
+        }
+
+        public void JoinRoom(string roomName)
+        {
+            if (!ResolveReferences())
+                return;
+
+            if (string.IsNullOrWhiteSpace(roomName))
+            {
+                RaiseFailure("Cannot join Netcode session: empty room name.");
+                return;
+            }
+
+            if (networkManager.IsServer || networkManager.IsClient)
+            {
+                RaiseFailure("Cannot join Netcode session: already running a client or host.");
+                return;
+            }
+
+            string sessionName = roomName.Trim();
+            ushort port = SessionNameToPort(sessionName);
+            unityTransport.SetConnectionData(connectAddress, port);
+            NetworkAvatarSpawnerNetcode.Instance?.RegisterSharedAvatarPrefabIfNeeded();
+            RegisterQueueRuntimePrefabIfNeeded();
+
+            SessionLifecycleTracker.Instance?.MarkJoinStarted(GetLocalUserId());
+
+            if (!networkManager.StartClient())
+            {
+                RaiseFailure($"Failed to join Netcode session '{sessionName}' at {connectAddress}:{port}.");
+                return;
+            }
+
+            transportPrepared = true;
+            currentSessionName = sessionName;
+            cachedSessions.Clear();
+            RaiseStatus($"Joining Netcode session '{sessionName}' at {connectAddress}:{port}...");
+            OnSessionBrowserUpdated?.Invoke(new List<string>(cachedSessions));
+            TLog("JoinRoomRequested", GetLocalUserId(), sessionName, $"Joining NGO direct-connect session at {connectAddress}:{port}.");
+        }
+
+        public void LeaveRoom()
+        {
+            if (!ResolveReferences())
+                return;
+
+            if (!networkManager.IsServer && !networkManager.IsClient)
+            {
+                RaiseFailure("Cannot leave Netcode session: no active client or host.");
+                return;
+            }
+
+            if (networkManager.IsServer)
+                SessionQueueRuntimeNetcode.Instance?.TryForceReleaseCurrentHolderForFinalization("Session leave");
+            TLog("LeaveRoomRequested", GetLocalUserId(), CurrentRoomName, "Requested to leave Netcode session.");
+            networkManager.Shutdown(false);
+            ResetLocalState(notifyObservers: true);
+            RaiseStatus("Left Netcode session.");
+        }
+
+        public void BeginSession()
+        {
+            EnsureQueueRuntimeSpawned();
+            SessionQueueRuntimeNetcode runtime = SessionQueueRuntimeNetcode.Instance;
+            SessionLifecycleTracker.Instance?.MarkSessionStartPressed(GetLocalUserId());
+
+            if (runtime != null && runtime.IsSpawned)
+            {
+                runtime.RequestBeginSessionForLocalPlayer();
+                RaiseStatus("Requested session start.");
+                SessionLifecycleTracker.Instance?.MarkSessionStartVisible(GetLocalUserId());
+                NetworkAvatarSpawnerNetcode.Instance?.RequestSpawnForLocalClient();
+                return;
+            }
+
+            localSessionStarted = true;
+            RaiseStatus("Session started locally (runtime not found).");
+            OnSessionStateChanged?.Invoke(localSessionStarted);
+            NetworkAvatarSpawnerNetcode.Instance?.RequestSpawnForLocalClient();
+        }
+
+        public bool SessionExists(string roomName)
+        {
+            return false;
+        }
+
+        public void ConfigureRuntime(Unity.Netcode.NetworkManager manager, UnityTransport transport, SessionQueueRuntimeNetcode runtimeTemplate)
+        {
+            networkManager = manager;
+            unityTransport = transport;
+            queueRuntimeTemplate = runtimeTemplate;
+            ResolveReferences();
+        }
+
+        public void RegisterQueueRuntimePrefabIfNeeded()
+        {
+            if (!ResolveReferences())
+                return;
+
+            if (!NetcodeRuntimeUtility.EnsureNetworkManagerConfigInitialized(networkManager))
+                return;
+
+            SessionQueueRuntimeNetcode template = ResolveQueueRuntimeTemplate();
+            if (template == null || template.gameObject == null || template.GetComponent<NetworkObject>() == null)
+                return;
+
+            bool registered = NetcodeRuntimeUtility.EnsureNetworkPrefabRegistered(networkManager, template.gameObject);
+            if (registered)
+                Log($"Registered Netcode queue runtime prefab '{template.gameObject.name}'.");
+        }
+
+        public string ConvertClientToUserId(ulong clientId)
+        {
+            return $"Client_{clientId}";
+        }
+
+        public string GetLocalUserId()
+        {
+            if (networkManager != null)
+                return ConvertClientToUserId(networkManager.LocalClientId);
+
+            return "UnknownUser";
+        }
+
+        private bool ResolveReferences()
+        {
+            if (networkManager == null)
+                networkManager = FindFirstObjectByType<Unity.Netcode.NetworkManager>();
+
+            if (unityTransport == null && networkManager != null)
+                unityTransport = networkManager.GetComponent<UnityTransport>();
+
+            ResolveQueueRuntimeTemplate();
+
+            if (networkManager == null || unityTransport == null)
+            {
+                if (!hasReportedMissingRuntimeReferences)
+                {
+                    RaiseFailure("SessionOrchestratorNetcode is missing NetworkManager or UnityTransport.");
+                    hasReportedMissingRuntimeReferences = true;
+                }
+
+                return false;
+            }
+
+            hasReportedMissingRuntimeReferences = false;
+            return true;
+        }
+
+        private void TryBindCallbacks()
+        {
+            if (callbacksBound || networkManager == null)
+                return;
+
+            networkManager.OnClientConnectedCallback += HandleClientConnected;
+            networkManager.OnClientDisconnectCallback += HandleClientDisconnected;
+            callbacksBound = true;
+        }
+
+        private void UnbindCallbacks()
+        {
+            if (!callbacksBound || networkManager == null)
+                return;
+
+            networkManager.OnClientConnectedCallback -= HandleClientConnected;
+            networkManager.OnClientDisconnectCallback -= HandleClientDisconnected;
+            callbacksBound = false;
+        }
+
+        private void HandleClientConnected(ulong clientId)
+        {
+            RefreshPlayerCache();
+
+            if (networkManager != null && networkManager.IsServer)
+                EnsureQueueRuntimeSpawned();
+
+            if (networkManager == null || !networkManager.IsClient)
+                return;
+
+            if (clientId != networkManager.LocalClientId)
+                return;
+
+            RaiseStatus($"Joined Netcode session '{currentSessionName}'.");
+            OnRoomJoined?.Invoke(currentSessionName);
+            SessionLifecycleTracker.Instance?.MarkJoinSucceeded(GetLocalUserId());
+        }
+
+        private void HandleClientDisconnected(ulong clientId)
+        {
+            RefreshPlayerCache();
+
+            if (networkManager == null || clientId != networkManager.LocalClientId)
+                return;
+
+            if (networkManager.ShutdownInProgress)
+                return;
+
+            string message = $"Disconnected from Netcode session '{currentSessionName}'.";
+            ResetLocalState(notifyObservers: true);
+            RaiseStatus(message);
+            OnConnectionFailed?.Invoke(message);
+        }
+
+        private void RefreshPlayerCache()
+        {
+            cachedPlayers.Clear();
+
+            if (networkManager == null)
+            {
+                OnPlayerListUpdated?.Invoke(new List<ulong>(cachedPlayers));
+                return;
+            }
+
+            if (networkManager.IsServer)
+            {
+                cachedPlayers.AddRange(networkManager.ConnectedClientsIds.OrderBy(id => id));
+            }
+            else if (networkManager.IsClient)
+            {
+                cachedPlayers.Add(networkManager.LocalClientId);
+            }
+
+            OnPlayerListUpdated?.Invoke(new List<ulong>(cachedPlayers));
+        }
+
+        private ushort SessionNameToPort(string roomName)
+        {
+            string normalized = string.IsNullOrWhiteSpace(roomName)
+                ? defaultSessionName
+                : roomName.Trim().ToLowerInvariant();
+
+            int offset = Mathf.Abs(normalized.GetHashCode() % portRange);
+            return (ushort)(basePort + offset);
+        }
+
+        private SessionQueueRuntimeNetcode ResolveQueueRuntimeTemplate()
+        {
+            if (queueRuntimeTemplate != null)
+                return queueRuntimeTemplate;
+
+            GameObject loaded = Resources.Load<GameObject>(OrchestrationRuntimePrefabPaths.NetcodeQueueRuntimeResourcesPath);
+            queueRuntimeTemplate = loaded != null ? loaded.GetComponent<SessionQueueRuntimeNetcode>() : null;
+            return queueRuntimeTemplate;
+        }
+
+        private void EnsureQueueRuntimeSpawned()
+        {
+            if (!spawnQueueRuntimeAutomatically || !ResolveReferences() || !networkManager.IsServer)
+                return;
+
+            if (spawnedQueueRuntime != null && spawnedQueueRuntime.IsSpawned)
+                return;
+
+            RegisterQueueRuntimePrefabIfNeeded();
+
+            SessionQueueRuntimeNetcode template = ResolveQueueRuntimeTemplate();
+            if (template == null)
+            {
+                Log("Queue runtime spawn skipped because no template is configured.");
+                return;
+            }
+
+            GameObject runtimeObject = Instantiate(template.gameObject);
+            runtimeObject.name = OrchestrationRuntimePrefabPaths.NetcodeQueueRuntimeName;
+
+            NetworkObject spawnedNetworkObject = runtimeObject.GetComponent<NetworkObject>();
+            if (spawnedNetworkObject == null)
+            {
+                Destroy(runtimeObject);
+                Log("Queue runtime spawn skipped because the instantiated template is missing NetworkObject.");
+                return;
+            }
+
+            spawnedNetworkObject.Spawn();
+            spawnedQueueRuntime = runtimeObject.GetComponent<SessionQueueRuntimeNetcode>();
+            Log("Spawned Netcode queue runtime.");
+        }
+
+        private void ResetLocalState(bool notifyObservers)
+        {
+            if (spawnedQueueRuntime != null && spawnedQueueRuntime.gameObject != null)
+                Destroy(spawnedQueueRuntime.gameObject);
+
+            transportPrepared = false;
+            localSessionStarted = false;
+            currentSessionName = "None";
+            spawnedQueueRuntime = null;
+            cachedPlayers.Clear();
+            cachedSessions.Clear();
+
+            if (!notifyObservers)
+                return;
+
+            OnPlayerListUpdated?.Invoke(new List<ulong>(cachedPlayers));
+            OnSessionBrowserUpdated?.Invoke(new List<string>(cachedSessions));
+            OnSessionStateChanged?.Invoke(false);
+        }
+
+        private void RaiseStatus(string message)
+        {
+            Log(message);
+            OnStatusMessage?.Invoke(message);
+        }
+
+        private void RaiseFailure(string message)
+        {
+            Log(message);
+            OnStatusMessage?.Invoke(message);
+            OnConnectionFailed?.Invoke(message);
+        }
+
+        private void Log(string message)
+        {
+            if (!verboseLogs)
+                return;
+
+            Debug.Log($"[SessionOrchestratorNetcode] {message}", this);
+        }
+
+        private void TLog(string eventType, string userId, string instrumentId, string details)
+        {
+            TelemetryLoggerCore.Instance?.LogEvent(eventType, userId, instrumentId, details);
+        }
+    }
+}

@@ -1,0 +1,318 @@
+using System.Collections.Generic;
+using FishNet.Connection;
+using FishNet.Managing;
+using FishNet.Object;
+using global::FishNet.Transporting;
+using Thesis.Orchestration.SharedSync;
+using UnityEngine;
+
+namespace Thesis.Orchestration.Backends.FishNet
+{
+    public class NetworkAvatarSpawnerFishNet : MonoBehaviour
+    {
+        public static NetworkAvatarSpawnerFishNet Instance { get; private set; }
+
+        [Header("References")]
+        [SerializeField] private SessionOrchestratorFishNet sessionOrchestrator;
+        [SerializeField] private NetworkManager networkManager;
+
+        [Header("Prefab")]
+        [SerializeField] private NetworkObject avatarPrefab;
+        [SerializeField] private bool spawnAutomaticallyForLateJoiners = true;
+
+        [Header("Debug")]
+        [SerializeField] private bool verboseLogs = true;
+
+        private readonly Dictionary<int, NetworkObject> spawnedAvatars = new();
+        private bool callbacksBound;
+
+        private void Awake()
+        {
+            if (Instance != null && Instance != this)
+            {
+                Destroy(gameObject);
+                return;
+            }
+
+            Instance = this;
+            ResolveReferences();
+        }
+
+        private void OnEnable()
+        {
+            ResolveReferences();
+            TryBindCallbacks();
+            RegisterSharedAvatarPrefabIfNeeded();
+        }
+
+        private void OnDisable()
+        {
+            UnbindCallbacks();
+        }
+
+        private void OnDestroy()
+        {
+            UnbindCallbacks();
+            spawnedAvatars.Clear();
+
+            if (Instance == this)
+                Instance = null;
+        }
+
+        private void Update()
+        {
+            ResolveReferences();
+            TryBindCallbacks();
+            RegisterSharedAvatarPrefabIfNeeded();
+            PruneSpawnedAvatars();
+        }
+
+        public void ConfigureRuntime(SessionOrchestratorFishNet orchestrator, NetworkManager manager)
+        {
+            sessionOrchestrator = orchestrator;
+            networkManager = manager;
+            ResolveReferences();
+        }
+
+        public void RequestSpawnForLocalClient()
+        {
+            ResolveReferences();
+
+            if (networkManager == null || !networkManager.IsServerStarted)
+            {
+                Log("Local spawn request skipped because only the FishNet server/host can spawn avatars.");
+                return;
+            }
+
+            if (networkManager.ClientManager == null || !networkManager.ClientManager.Connection.IsValid)
+            {
+                Log("Local spawn request skipped because the local FishNet client connection is not ready.");
+                return;
+            }
+
+            TrySpawnAvatar(networkManager.ClientManager.Connection.ClientId);
+        }
+
+        public void EnsureSpawnForConnectedClients()
+        {
+            ResolveReferences();
+            RegisterSharedAvatarPrefabIfNeeded();
+
+            if (networkManager == null || !networkManager.IsServerStarted)
+                return;
+
+            if (sessionOrchestrator != null && sessionOrchestrator.CurrentPlayers != null)
+            {
+                foreach (int clientId in sessionOrchestrator.CurrentPlayers)
+                    TrySpawnAvatar(clientId);
+
+                return;
+            }
+
+            if (networkManager.ServerManager == null || networkManager.ServerManager.Clients == null)
+                return;
+
+            foreach (int clientId in networkManager.ServerManager.Clients.Keys)
+                TrySpawnAvatar(clientId);
+        }
+
+        public void RegisterSharedAvatarPrefabIfNeeded()
+        {
+            ResolveReferences();
+
+            if (networkManager == null || networkManager.SpawnablePrefabs == null)
+                return;
+
+            NetworkObject prefabToRegister = ResolveAvatarPrefab();
+            if (prefabToRegister == null)
+                return;
+
+            int count = networkManager.SpawnablePrefabs.GetObjectCount();
+            for (int index = 0; index < count; index++)
+            {
+                if (networkManager.SpawnablePrefabs.GetObject(true, index) == prefabToRegister)
+                    return;
+            }
+
+            networkManager.SpawnablePrefabs.AddObject(prefabToRegister, checkForDuplicates: true, initializeAdded: true);
+            Log($"Registered FishNet avatar prefab '{prefabToRegister.name}' in SpawnablePrefabs.");
+        }
+
+        public void TrySpawnAvatar(int clientId)
+        {
+            ResolveReferences();
+            PruneSpawnedAvatars();
+            RegisterSharedAvatarPrefabIfNeeded();
+
+            if (networkManager == null || !networkManager.IsServerStarted)
+            {
+                Log($"Spawn skipped for Client_{clientId} because FishNet server is not running.");
+                return;
+            }
+
+            if (spawnedAvatars.TryGetValue(clientId, out NetworkObject cachedAvatar) &&
+                cachedAvatar != null &&
+                cachedAvatar.IsSpawned)
+            {
+                Log($"Spawn skipped for Client_{clientId} because a cached avatar is still spawned.");
+                return;
+            }
+
+            NetworkObject prefabToSpawn = ResolveAvatarPrefab();
+            if (prefabToSpawn == null)
+            {
+                Log("Spawn skipped because avatar prefab is missing or invalid.");
+                return;
+            }
+
+            NetworkConnection ownerConnection = ResolveOwnerConnection(clientId);
+            if (ownerConnection == null || !ownerConnection.IsValid)
+            {
+                Log($"Spawn skipped for Client_{clientId} because no matching FishNet connection was found.");
+                return;
+            }
+
+            NetworkObject avatarObject = networkManager.GetPooledInstantiated(prefabToSpawn, Vector3.zero, Quaternion.identity, true);
+            if (avatarObject == null)
+            {
+                Log($"Spawn skipped for Client_{clientId} because pooled instantiation failed.");
+                return;
+            }
+
+            networkManager.ServerManager.Spawn(avatarObject, ownerConnection);
+            networkManager.SceneManager.AddOwnerToDefaultScene(avatarObject);
+
+            spawnedAvatars[clientId] = avatarObject;
+            Log($"Spawned FishNet avatar for Client_{clientId}.");
+        }
+
+        private void ResolveReferences()
+        {
+            sessionOrchestrator ??= SessionOrchestratorFishNet.Instance;
+
+            if (sessionOrchestrator == null)
+                sessionOrchestrator = FindFirstObjectByType<SessionOrchestratorFishNet>();
+
+            if (networkManager == null && sessionOrchestrator != null)
+                networkManager = sessionOrchestrator.NetworkManager;
+
+            if (networkManager == null)
+                networkManager = FindFirstObjectByType<NetworkManager>();
+        }
+
+        private void TryBindCallbacks()
+        {
+            if (callbacksBound || networkManager == null)
+                return;
+
+            networkManager.ServerManager.OnRemoteConnectionState += HandleRemoteConnectionState;
+            callbacksBound = true;
+        }
+
+        private void UnbindCallbacks()
+        {
+            if (!callbacksBound || networkManager == null)
+                return;
+
+            networkManager.ServerManager.OnRemoteConnectionState -= HandleRemoteConnectionState;
+            callbacksBound = false;
+        }
+
+        private void HandleRemoteConnectionState(NetworkConnection connection, RemoteConnectionStateArgs args)
+        {
+            if (args.ConnectionState == RemoteConnectionState.Stopped)
+            {
+                spawnedAvatars.Remove(connection.ClientId);
+                return;
+            }
+
+            if (!spawnAutomaticallyForLateJoiners || sessionOrchestrator == null || !sessionOrchestrator.SessionStarted)
+                return;
+
+            TrySpawnAvatar(connection.ClientId);
+        }
+
+        private NetworkObject ResolveAvatarPrefab()
+        {
+            string preferredPath = SharedAvatarRuntimeUtility.ResolveAvatarPrefabResourcesPath();
+            GameObject preferred = Resources.Load<GameObject>(preferredPath);
+            if (preferred != null)
+            {
+                NetworkObject preferredNetworkObject = preferred.GetComponent<NetworkObject>();
+                if (IsFishNetAvatarPrefabValid(preferredNetworkObject))
+                {
+                    avatarPrefab = preferredNetworkObject;
+                    return avatarPrefab;
+                }
+            }
+
+            if (IsFishNetAvatarPrefabValid(avatarPrefab))
+                return avatarPrefab;
+
+            GameObject fallback = Resources.Load<GameObject>(SharedAvatarRuntimeUtility.DefaultAvatarPrefabResourcesPath);
+            avatarPrefab = fallback != null ? fallback.GetComponent<NetworkObject>() : null;
+            return IsFishNetAvatarPrefabValid(avatarPrefab) ? avatarPrefab : null;
+        }
+
+        private static bool IsFishNetAvatarPrefabValid(NetworkObject candidate)
+        {
+            if (candidate == null)
+                return false;
+
+            return candidate.GetComponent<UserPresenceTransformSyncFishNet>() != null &&
+                   SharedAvatarRuntimeUtility.HasCompatibleFollowAnchor(candidate.gameObject);
+        }
+
+        private NetworkConnection ResolveOwnerConnection(int clientId)
+        {
+            if (networkManager == null)
+                return null;
+
+            if (networkManager.ServerManager != null &&
+                networkManager.ServerManager.Clients != null &&
+                networkManager.ServerManager.Clients.TryGetValue(clientId, out NetworkConnection serverConnection))
+            {
+                return serverConnection;
+            }
+
+            if (networkManager.ClientManager != null &&
+                networkManager.ClientManager.Connection.IsValid &&
+                networkManager.ClientManager.Connection.ClientId == clientId)
+            {
+                return networkManager.ClientManager.Connection;
+            }
+
+            return null;
+        }
+
+        private void PruneSpawnedAvatars()
+        {
+            if (spawnedAvatars.Count == 0)
+                return;
+
+            List<int> staleClientIds = null;
+            foreach (KeyValuePair<int, NetworkObject> pair in spawnedAvatars)
+            {
+                if (pair.Value != null && pair.Value.IsSpawned)
+                    continue;
+
+                staleClientIds ??= new List<int>();
+                staleClientIds.Add(pair.Key);
+            }
+
+            if (staleClientIds == null)
+                return;
+
+            foreach (int clientId in staleClientIds)
+                spawnedAvatars.Remove(clientId);
+        }
+
+        private void Log(string message)
+        {
+            if (!verboseLogs)
+                return;
+
+            Debug.Log($"[NetworkAvatarSpawnerFishNet] {message}", this);
+        }
+    }
+}

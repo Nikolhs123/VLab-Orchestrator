@@ -1,0 +1,18 @@
+{
+  "name": "com.vlab.orchestrator.backend.fusion",
+  "displayName": "VLab Orchestrator Backend - Photon Fusion",
+  "version": "0.3.0",
+  "unity": "6000.3",
+  "description": "Optional Photon Fusion adapter boundary and project-authored reference source.",
+  "dependencies": {
+    "com.vlab.orchestrator.core": "0.3.0",
+    "com.unity.nuget.mono-cecil": "1.11.6",
+    "com.unity.nuget.newtonsoft-json": "3.2.2",
+    "com.unity.ugui": "2.0.0",
+    "com.unity.modules.animation": "1.0.0",
+    "com.unity.modules.particlesystem": "1.0.0",
+    "com.unity.modules.physics": "1.0.0",
+    "com.unity.modules.physics2d": "1.0.0",
+    "com.unity.modules.unitywebrequest": "1.0.0"
+  }
+}

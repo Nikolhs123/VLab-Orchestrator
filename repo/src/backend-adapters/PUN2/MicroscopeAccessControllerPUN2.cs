@@ -1,0 +1,295 @@
+using Photon.Pun;
+using Photon.Realtime;
+using System.Collections.Generic;
+using Thesis.Orchestration.SharedSync;
+using Thesis.Orchestration.Telemetry;
+using UnityEngine;
+
+namespace Thesis.Orchestration.Backends.PUN2
+{
+    [RequireComponent(typeof(PhotonView))]
+    public class MicroscopeAccessControllerPUN2 : BaseMicroscopeAccessController, IPunOwnershipCallbacks
+    {
+        [Header("References")]
+        [SerializeField] private SessionQueueRuntimePUN2 queueRuntime;
+        [SerializeField] private PhotonView photonView;
+
+        [Header("Ownership")]
+        [Tooltip("If true, ownership will also be requested for all controlled child objects that have PhotonViews.")]
+        [SerializeField] private bool requestOwnershipForControlledChildren = true;
+
+        [Tooltip("Minimum time between repeated ownership requests for the same PhotonView.")]
+        [SerializeField] private float ownershipRequestCooldownSeconds = 0.5f;
+
+        private readonly Dictionary<int, float> lastOwnershipRequestTimeByViewId = new();
+        private readonly HashSet<int> pendingOwnershipViewIds = new();
+        private bool logicalAuthorityTransferPending;
+
+        private void Awake()
+        {
+            BaseAwake();
+
+            if (photonView == null)
+                photonView = GetComponent<PhotonView>();
+
+            if (queueRuntime == null)
+                queueRuntime = SessionQueueRuntimePUN2.Instance;
+        }
+
+        private void OnEnable()
+        {
+            ResolveQueueRuntime();
+
+            PhotonNetwork.AddCallbackTarget(this);
+
+            if (queueRuntime != null)
+                queueRuntime.OnRuntimeStateUpdated += RefreshAccessState;
+        }
+
+        private void OnDisable()
+        {
+            PhotonNetwork.RemoveCallbackTarget(this);
+            lastOwnershipRequestTimeByViewId.Clear();
+            pendingOwnershipViewIds.Clear();
+            logicalAuthorityTransferPending = false;
+
+            if (queueRuntime != null)
+                queueRuntime.OnRuntimeStateUpdated -= RefreshAccessState;
+        }
+
+        private void Start()
+        {
+            BaseStart();
+        }
+
+        private void Update()
+        {
+            BaseUpdate();
+        }
+
+        private string GetTrackedObjectId()
+        {
+            if (sharedDefinition != null && !string.IsNullOrWhiteSpace(sharedDefinition.ObjectId))
+                return sharedDefinition.ObjectId;
+
+            return gameObject.name;
+        }
+
+        private string GetCurrentOwnerId(PhotonView view)
+        {
+            if (view == null || view.Owner == null)
+                return "None";
+
+            return $"Actor_{view.OwnerActorNr}";
+        }
+
+        private void ResolveQueueRuntime()
+        {
+            queueRuntime ??= SessionQueueRuntimePUN2.Instance;
+            if (queueRuntime == null)
+                queueRuntime = FindFirstObjectByType<SessionQueueRuntimePUN2>();
+        }
+
+        protected override bool CanEvaluateAccessState()
+        {
+            ResolveQueueRuntime();
+            return queueRuntime != null && sharedDefinition != null && photonView != null;
+        }
+
+        protected override bool IsQueueRuntimeActive()
+        {
+            return queueRuntime != null && queueRuntime.QueueRuntimeActive;
+        }
+
+        protected override string GetCurrentInstrumentId()
+        {
+            return queueRuntime != null ? queueRuntime.CurrentInstrumentId : string.Empty;
+        }
+
+        protected override string GetCurrentHolderUserId()
+        {
+            return queueRuntime != null ? queueRuntime.CurrentHolderUserId : "None";
+        }
+
+        protected override string GetLocalUserId()
+        {
+            if (PhotonNetwork.LocalPlayer == null)
+                return "UnknownUser";
+
+            return $"Actor_{PhotonNetwork.LocalPlayer.ActorNumber}";
+        }
+
+        protected override void RequestAuthorityIfNeeded()
+        {
+            bool requestedAny = false;
+            string ownerBefore = "None";
+
+            TryRequestOwnershipForAnalytics(photonView, "root", ref requestedAny, ref ownerBefore);
+
+            if (!requestOwnershipForControlledChildren)
+            {
+                if (requestedAny)
+                    BeginLogicalAuthorityTransfer(ownerBefore);
+                return;
+            }
+
+            foreach (var child in GetControlledChildObjects())
+            {
+                if (child == null)
+                    continue;
+
+                PhotonView childPhotonView = child.GetComponent<PhotonView>();
+                if (childPhotonView == null)
+                    continue;
+
+                TryRequestOwnershipForAnalytics(childPhotonView, child.name, ref requestedAny, ref ownerBefore);
+            }
+
+            if (requestedAny)
+                BeginLogicalAuthorityTransfer(ownerBefore);
+        }
+
+        protected override void OnLocalAccessChanged(bool hasAccess)
+        {
+            TLog(
+                hasAccess ? "MicroscopeLocalAccessGranted" : "MicroscopeLocalAccessRevoked",
+                GetLocalUserId(),
+                sharedDefinition != null ? sharedDefinition.ObjectId : name,
+                $"Local access changed to {hasAccess}.");
+        }
+
+        private void TryRequestOwnershipForAnalytics(PhotonView targetView, string label, ref bool requestedAny, ref string ownerBefore)
+        {
+            if (targetView == null)
+                return;
+
+            string candidateOwnerBefore = GetCurrentOwnerId(targetView);
+            if (!RequestOwnershipForPhotonView(targetView, label))
+                return;
+
+            if (!requestedAny)
+                ownerBefore = candidateOwnerBefore;
+
+            requestedAny = true;
+        }
+
+        private bool RequestOwnershipForPhotonView(PhotonView targetView, string label)
+        {
+            if (targetView == null)
+                return false;
+
+            // Already authoritative: avoid per-frame telemetry spam.
+            if (targetView.IsMine)
+                return false;
+
+            int viewId = targetView.ViewID;
+            float now = Time.time;
+
+            if (lastOwnershipRequestTimeByViewId.TryGetValue(viewId, out float lastTime) &&
+                now - lastTime < ownershipRequestCooldownSeconds)
+                return false;
+
+            lastOwnershipRequestTimeByViewId[viewId] = now;
+            pendingOwnershipViewIds.Add(viewId);
+
+            targetView.RequestOwnership();
+
+            Log($"Requested ownership for {label}. ViewID={viewId}, OwnerActorNr={targetView.OwnerActorNr}");
+            TLog(
+                "OwnershipRequested",
+                GetLocalUserId(),
+                sharedDefinition != null ? sharedDefinition.ObjectId : name,
+                $"Requested ownership for {label}, ViewID={viewId}, CurrentOwner={targetView.OwnerActorNr}");
+            return true;
+        }
+
+        private void BeginLogicalAuthorityTransfer(string ownerBefore)
+        {
+            if (logicalAuthorityTransferPending)
+                return;
+
+            logicalAuthorityTransferPending = true;
+
+            AuthorityTransferRecorder.Instance?.RecordTransferRequested(
+                GetTrackedObjectId(),
+                GetLocalUserId(),
+                ownerBefore,
+                "PUN2 logical microscope ownership request initiated.");
+        }
+
+        private void CompleteLogicalAuthorityTransfer(bool success, string ownerAfter, string details)
+        {
+            if (!logicalAuthorityTransferPending)
+                return;
+
+            logicalAuthorityTransferPending = false;
+            pendingOwnershipViewIds.Clear();
+
+            AuthorityTransferRecorder recorder = AuthorityTransferRecorder.Instance;
+            recorder?.RecordTransferCompleted(
+                GetTrackedObjectId(),
+                GetLocalUserId(),
+                ownerAfter,
+                success,
+                details);
+
+            if (recorder != null)
+            {
+                ResolveQueueRuntime();
+                string rowJson = recorder.BuildMostRecentCompletedRowJson(GetTrackedObjectId(), GetLocalUserId());
+                queueRuntime?.SubmitAuthorityTransferSnapshot(rowJson);
+            }
+        }
+
+        // ----------------------------------------------------
+        // Photon ownership callbacks (authority transfer analytics)
+        // ----------------------------------------------------
+
+        public void OnOwnershipRequest(PhotonView targetView, Player requestingPlayer)
+        {
+            // No-op: analytics are recorded by the requesting client (RecordTransferRequested).
+        }
+
+        public void OnOwnershipTransfered(PhotonView targetView, Player previousOwner)
+        {
+            if (targetView == null || PhotonNetwork.LocalPlayer == null)
+                return;
+
+            pendingOwnershipViewIds.Remove(targetView.ViewID);
+
+            // Record completion only on the client that became the owner (avoids duplicate rows).
+            if (targetView.OwnerActorNr != PhotonNetwork.LocalPlayer.ActorNumber)
+                return;
+
+            CompleteLogicalAuthorityTransfer(
+                true,
+                GetLocalUserId(),
+                "PUN2 logical microscope ownership transfer callback received.");
+        }
+
+        public void OnOwnershipTransferFailed(PhotonView targetView, Player senderOfFailedRequest)
+        {
+            if (targetView == null || senderOfFailedRequest == null || PhotonNetwork.LocalPlayer == null)
+                return;
+
+            pendingOwnershipViewIds.Remove(targetView.ViewID);
+
+            // Record failure only on the client that sent the request.
+            if (senderOfFailedRequest.ActorNumber != PhotonNetwork.LocalPlayer.ActorNumber)
+                return;
+
+            if (pendingOwnershipViewIds.Count == 0)
+            {
+                CompleteLogicalAuthorityTransfer(
+                    false,
+                    GetCurrentOwnerId(photonView),
+                    "PUN2 logical microscope ownership transfer failed.");
+            }
+        }
+
+        private void TLog(string eventType, string userId, string instrumentId, string details)
+        {
+            TelemetryLoggerCore.Instance?.LogEvent(eventType, userId, instrumentId, details);
+        }
+    }
+}

@@ -1,0 +1,713 @@
+using Fusion;
+using System;
+using System.Collections.Generic;
+using System.Globalization;
+using System.Linq;
+using Thesis.Orchestration.Analytics;
+using Thesis.Orchestration.Core;
+using Thesis.Orchestration.Core.Models;
+using Thesis.Orchestration.Runtime;
+using Thesis.Orchestration.Telemetry;
+using UnityEngine;
+
+namespace Thesis.Orchestration.Backends.Fusion
+{
+    [RequireComponent(typeof(NetworkObject))]
+    public class SessionQueueRuntimeFusion : NetworkBehaviour
+    {
+        public static SessionQueueRuntimeFusion Instance { get; private set; }
+
+        [Header("References")]
+        [SerializeField] private SessionOrchestratorFusion sessionOrchestrator;
+        [SerializeField] private Thesis.Orchestration.SharedSync.SharedObjectSyncRegistry sharedRegistry;
+
+        [Header("Timeout Settings")]
+        [SerializeField] private float idleTimeoutSeconds = 20f;
+        [SerializeField] private float timeoutCheckIntervalSeconds = 1f;
+
+        [Header("History")]
+        [SerializeField] private int maxHistoryEntries = 20;
+
+        [Header("Debug")]
+        [SerializeField] private bool verboseLogs = true;
+
+        private QueueRuntimeSharedLogic sharedLogic;
+        private float timeoutTimer;
+        private string lastRenderedSignature = string.Empty;
+        private string lastSubmittedLifecycleRowJson = string.Empty;
+        public bool IsRuntimeSpawned => hasSpawned;
+        private bool hasSpawned;
+        private bool hasInitializedForCurrentSession;
+
+        [Networked] public NetworkBool SessionStartedNetworked { get; set; }
+        [Networked] private NetworkBool QueueRuntimeActiveNetworked { get; set; }
+        [Networked] private NetworkString<_64> CurrentInstrumentIdNetworked { get; set; }
+        [Networked] private NetworkString<_64> CurrentHolderUserIdNetworked { get; set; }
+        [Networked] private NetworkString<_512> CurrentQueueJoinedNetworked { get; set; }
+        [Networked] private NetworkString<_512> ReplicatedHistoryJoinedNetworked { get; set; }
+        [Networked] private NetworkString<_512> SharedUserCardStatsJsonNetworked { get; set; }
+
+        private UserCardStatsSnapshot cachedSharedUserCardStats = new UserCardStatsSnapshot();
+
+        public bool SessionStarted => hasSpawned && SessionStartedNetworked;
+        public bool QueueRuntimeActive => hasSpawned && QueueRuntimeActiveNetworked;
+
+        public string CurrentInstrumentId =>
+            hasSpawned ? SafeRead(CurrentInstrumentIdNetworked) : string.Empty;
+
+        public string CurrentHolderUserId =>
+            hasSpawned
+                ? NormalizeHolderId(SafeRead(CurrentHolderUserIdNetworked))
+                : "None";
+
+        public List<string> CurrentQueueSnapshot =>
+            hasSpawned ? SplitJoinedString(SafeRead(CurrentQueueJoinedNetworked)) : new List<string>();
+
+        public List<string> ReplicatedHistorySnapshot =>
+            hasSpawned ? SplitJoinedString(SafeRead(ReplicatedHistoryJoinedNetworked)) : new List<string>();
+
+        public bool HasSharedUserCardStats =>
+            cachedSharedUserCardStats != null &&
+            cachedSharedUserCardStats.users != null &&
+            cachedSharedUserCardStats.users.Count > 0;
+
+        public IReadOnlyList<UserCardStatsEntry> SharedUserCardStats =>
+            cachedSharedUserCardStats != null && cachedSharedUserCardStats.users != null
+                ? cachedSharedUserCardStats.users
+                : Array.Empty<UserCardStatsEntry>();
+
+        public event Action OnRuntimeStateUpdated;
+
+        private void Awake()
+        {
+            if (Instance != null && Instance != this)
+            {
+                Debug.LogWarning("[SessionQueueRuntimeFusion] Duplicate instance found. Destroying duplicate.", this);
+                Destroy(gameObject);
+                return;
+            }
+
+            Instance = this;
+
+            if (sessionOrchestrator == null)
+                sessionOrchestrator = SessionOrchestratorFusion.Instance;
+
+            if (sharedRegistry == null)
+                sharedRegistry = Thesis.Orchestration.SharedSync.SharedObjectSyncRegistry.Instance;
+
+            sharedLogic = new QueueRuntimeSharedLogic(maxHistoryEntries);
+        }
+
+        private void OnEnable()
+        {
+            if (sessionOrchestrator == null)
+                sessionOrchestrator = SessionOrchestratorFusion.Instance;
+
+            if (sessionOrchestrator != null)
+                sessionOrchestrator.OnPlayerListUpdated += HandlePlayerListUpdated;
+        }
+
+        private void OnDisable()
+        {
+            if (sessionOrchestrator != null)
+                sessionOrchestrator.OnPlayerListUpdated -= HandlePlayerListUpdated;
+        }
+
+        private void OnDestroy()
+        {
+            if (sessionOrchestrator != null)
+                sessionOrchestrator.OnPlayerListUpdated -= HandlePlayerListUpdated;
+
+            if (Instance == this)
+                Instance = null;
+        }
+
+        public override void Spawned()
+        {
+            hasSpawned = true;
+            sharedLogic ??= new QueueRuntimeSharedLogic(maxHistoryEntries);
+
+            if (sessionOrchestrator == null)
+                sessionOrchestrator = SessionOrchestratorFusion.Instance;
+
+            if (sharedRegistry == null)
+                sharedRegistry = Thesis.Orchestration.SharedSync.SharedObjectSyncRegistry.Instance;
+
+            Log($"Spawned. StateAuthority={Object.HasStateAuthority}, IsValid={Object != null && Object.IsValid}");
+            PullSharedUserCardStats();
+            OnRuntimeStateUpdated?.Invoke();
+        }
+
+        public override void Despawned(NetworkRunner runner, bool hasState)
+        {
+            hasSpawned = false;
+            hasInitializedForCurrentSession = false;
+            timeoutTimer = 0f;
+            lastRenderedSignature = string.Empty;
+            cachedSharedUserCardStats = new UserCardStatsSnapshot();
+        }
+
+        public override void FixedUpdateNetwork()
+        {
+            if (!Object.HasStateAuthority)
+                return;
+
+            if (SessionStartedNetworked && !QueueRuntimeActiveNetworked && !hasInitializedForCurrentSession)
+            {
+                TryInitializeQueueRuntime();
+            }
+
+            if (!QueueRuntimeActiveNetworked || !sharedLogic.IsInitialized)
+                return;
+
+            timeoutTimer += Runner.DeltaTime;
+            if (timeoutTimer >= timeoutCheckIntervalSeconds)
+            {
+                timeoutTimer = 0f;
+                CheckTimeoutForCurrentInstrument();
+            }
+        }
+
+        public override void Render()
+        {
+            if (!hasSpawned)
+                return;
+
+            SubmitLocalLifecycleSnapshotIfNeeded();
+
+            string newSignature = BuildReplicatedStateSignature();
+
+            if (newSignature == lastRenderedSignature)
+                return;
+
+            lastRenderedSignature = newSignature;
+            PullSharedUserCardStats();
+            OnRuntimeStateUpdated?.Invoke();
+        }
+
+        private void HandlePlayerListUpdated(List<PlayerRef> players)
+        {
+            if (!Object || !Object.IsValid || !Object.HasStateAuthority)
+                return;
+
+            if (!QueueRuntimeActiveNetworked || !sharedLogic.IsInitialized)
+                return;
+
+            List<string> activeUserIds = players
+                .Select(p => sessionOrchestrator != null ? sessionOrchestrator.ConvertPlayerToUserId(p) : $"Player_{p.RawEncoded}")
+                .ToList();
+
+            sharedLogic.SyncUsers(
+                CurrentInstrumentId,
+                activeUserIds,
+                removedHolderId => sharedLogic.ReleaseAccess(removedHolderId, CurrentInstrumentId));
+
+            BroadcastState("Fusion player list synced.");
+        }
+
+        public void RequestBeginSessionForLocalPlayer()
+        {
+            if (!hasSpawned)
+            {
+                AddLocalStatus("Cannot begin session yet: SessionQueueRuntimeFusion not spawned.");
+                return;
+            }
+
+            if (Runner == null || !Runner.IsRunning)
+            {
+                AddLocalStatus("Cannot begin session yet: runner not running.");
+                return;
+            }
+
+            if (Object == null || !Object.IsValid)
+            {
+                AddLocalStatus("Cannot begin session yet: network object not valid.");
+                return;
+            }
+
+            RPC_RequestBeginSession(GetLocalUserId());
+        }
+
+        public void RequestAccessForLocalPlayer()
+        {
+            if (!QueueRuntimeActive)
+            {
+                AddLocalStatus("Queue runtime not active yet.");
+                return;
+            }
+
+            string userId = GetLocalUserId();
+            TLog("AccessRequested", userId, CurrentInstrumentId, "Local player requested access.");
+
+            RPC_RequestAccess(userId, CurrentInstrumentId);
+        }
+
+        public void ReleaseAccessForLocalPlayer()
+        {
+            if (!QueueRuntimeActive)
+            {
+                AddLocalStatus("Queue runtime not active yet.");
+                return;
+            }
+
+            string userId = GetLocalUserId();
+            TLog("ReleaseRequested", userId, CurrentInstrumentId, "Local player requested release.");
+            RPC_ReleaseAccess(userId, CurrentInstrumentId);
+        }
+
+        public bool TryForceReleaseCurrentHolderForFinalization(string reason)
+        {
+            if (!hasSpawned || !QueueRuntimeActive)
+                return false;
+
+            string holderUserId = CurrentHolderUserId;
+            if (string.IsNullOrWhiteSpace(holderUserId) || holderUserId == "None")
+                return false;
+
+            RPC_ForceReleaseCurrentHolderForFinalization(reason ?? "Finalization");
+            return true;
+        }
+
+        public void HeartbeatForLocalPlayer()
+        {
+            if (!QueueRuntimeActive)
+                return;
+
+            string userId = GetLocalUserId();
+            RPC_Heartbeat(userId, CurrentInstrumentId);
+        }
+
+        [Rpc(RpcSources.All, RpcTargets.StateAuthority)]
+        private void RPC_RequestBeginSession(string requestingUserId)
+        {
+            if (!Object.HasStateAuthority)
+                return;
+
+            if (SessionStartedNetworked)
+                return;
+
+            SessionStartedNetworked = true;
+            hasInitializedForCurrentSession = false;
+            sharedLogic.AddHistory($"Session started by {requestingUserId}");
+            TLog("FusionSessionStarted", requestingUserId, CurrentInstrumentId, "Session start approved on state authority.");
+
+            TryInitializeQueueRuntime();
+            BroadcastState("Session started.");
+        }
+
+        [Rpc(RpcSources.All, RpcTargets.StateAuthority)]
+        private void RPC_RequestAccess(string userId, string instrumentId)
+        {
+            if (!Object.HasStateAuthority || !QueueRuntimeActiveNetworked || !sharedLogic.IsInitialized)
+                return;
+
+            // Record the request on the authoritative side so wait times and counts are consistent.
+            sharedLogic.RecordQueueRequest(
+                userId,
+                instrumentId,
+                CurrentHolderUserId,
+                CurrentQueueSnapshot,
+                "Fusion request received on state authority.");
+
+            QueueDecision decision = sharedLogic.RequestAccess(userId, instrumentId);
+            HandleDecisionAuthoritatively($"RequestAccess({userId})", decision);
+        }
+
+        [Rpc(RpcSources.All, RpcTargets.StateAuthority)]
+        private void RPC_ReleaseAccess(string userId, string instrumentId)
+        {
+            if (!Object.HasStateAuthority || !QueueRuntimeActiveNetworked || !sharedLogic.IsInitialized)
+                return;
+
+            QueueDecision decision = sharedLogic.ReleaseAccess(userId, instrumentId);
+            HandleDecisionAuthoritatively($"ReleaseAccess({userId})", decision);
+        }
+
+        [Rpc(RpcSources.All, RpcTargets.StateAuthority)]
+        private void RPC_ForceReleaseCurrentHolderForFinalization(string reason)
+        {
+            if (!Object.HasStateAuthority || !QueueRuntimeActiveNetworked || !sharedLogic.IsInitialized)
+                return;
+
+            string holderUserId = CurrentHolderUserId;
+            if (string.IsNullOrWhiteSpace(holderUserId) || holderUserId == "None")
+                return;
+
+            QueueDecision decision = sharedLogic.ReleaseAccess(holderUserId, CurrentInstrumentId);
+            HandleDecisionAuthoritatively($"ForceReleaseForFinalization({reason ?? "Finalization"})", decision);
+        }
+
+        [Rpc(RpcSources.All, RpcTargets.StateAuthority)]
+        private void RPC_Heartbeat(string userId, string instrumentId)
+        {
+            if (!Object.HasStateAuthority || !QueueRuntimeActiveNetworked || !sharedLogic.IsInitialized)
+                return;
+
+            sharedLogic.RegisterHeartbeat(userId, instrumentId);
+            // Heartbeats should update timeout state only.
+            // Do not append them to replicated history or rebroadcast the whole runtime state,
+            // otherwise state strings and snapshots drift unnecessarily and can flood replication.
+        }
+
+        [Rpc(RpcSources.All, RpcTargets.StateAuthority)]
+        private void RPC_SubmitLifecycleSnapshot(string rowJson)
+        {
+            if (!Object.HasStateAuthority)
+                return;
+
+            SessionLifecycleTracker.Instance?.ApplyRowJson(rowJson);
+        }
+
+        private void TryInitializeQueueRuntime()
+        {
+            if (!Object.HasStateAuthority)
+                return;
+
+            if (!Runner.IsRunning)
+            {
+                AddLocalStatus("Cannot initialize queue runtime: runner not active.");
+                return;
+            }
+
+            if (sharedRegistry == null)
+                sharedRegistry = Thesis.Orchestration.SharedSync.SharedObjectSyncRegistry.Instance;
+
+            if (sharedRegistry == null)
+            {
+                AddLocalStatus("Cannot initialize queue runtime: missing shared registry.");
+                return;
+            }
+
+            SharedSync.SharedSyncObjectDefinition instrumentDefinition =
+                sharedRegistry.GetPreferredQueueControlledObject(Thesis.Orchestration.EditorTools.OrchestrationBackendType.Fusion);
+
+            if (instrumentDefinition == null)
+            {
+                AddLocalStatus("No shared instrument with queue control found.");
+                return;
+            }
+
+            string instrumentId = instrumentDefinition.ObjectId;
+            CurrentInstrumentIdNetworked = instrumentId;
+
+            IEnumerable<string> userIds = sessionOrchestrator != null
+                ? sessionOrchestrator.CurrentPlayers.OrderBy(p => p.RawEncoded).Select(sessionOrchestrator.ConvertPlayerToUserId)
+                : Array.Empty<string>();
+
+            sharedLogic.Initialize(instrumentId, userIds);
+
+            QueueRuntimeActiveNetworked = true;
+            hasInitializedForCurrentSession = true;
+            timeoutTimer = 0f;
+
+            TLog("QueueRuntimeInitialized", GetLocalUserId(), instrumentId, "Fusion queue runtime initialized on state authority.");
+            BroadcastState("Queue runtime initialized.");
+        }
+
+        private void CheckTimeoutForCurrentInstrument()
+        {
+            if (!Object.HasStateAuthority || !sharedLogic.IsInitialized)
+                return;
+
+            string instrumentId = CurrentInstrumentId;
+            if (string.IsNullOrWhiteSpace(instrumentId))
+                return;
+
+            QueueDecision decision = sharedLogic.CheckTimeout(instrumentId, TimeSpan.FromSeconds(idleTimeoutSeconds));
+            if (decision != null)
+            {
+                HandleDecisionAuthoritatively("TimeoutCheck()", decision);
+            }
+        }
+
+        private void BroadcastState(string reason)
+        {
+            if (!Object.HasStateAuthority || !sharedLogic.IsInitialized)
+                return;
+
+            string instrumentId = CurrentInstrumentId;
+            CurrentHolderUserIdNetworked = sharedLogic.GetCurrentHolder(instrumentId);
+            CurrentQueueJoinedNetworked = sharedLogic.BuildJoinedQueue(instrumentId);
+            ReplicatedHistoryJoinedNetworked = sharedLogic.BuildJoinedHistory();
+
+            AddLocalStatus($"State updated: {reason}");
+
+            PublishSharedUserCardStats();
+            PullSharedUserCardStats();
+            OnRuntimeStateUpdated?.Invoke();
+        }
+
+        private void PublishSharedUserCardStats()
+        {
+            if (!Object.HasStateAuthority)
+                return;
+
+            UsageTimingTracker tracker = UsageTimingTracker.Instance;
+
+            List<string> activeUserIds =
+                sessionOrchestrator != null
+                    ? sessionOrchestrator.CurrentPlayers.Select(sessionOrchestrator.ConvertPlayerToUserId).ToList()
+                    : new List<string>();
+
+            SessionLifecycleTracker.Instance?.EnsureClientsObserved(activeUserIds);
+
+            UserCardStatsSnapshot snapshot = Thesis.Orchestration.Telemetry.SharedUserCardStats.BuildSnapshot(
+                activeUserIds,
+                userId => OrchestrationPlayerNameRegistry.ResolveDisplayName(userId, userId),
+                userId =>
+                {
+                    if (sessionOrchestrator == null || Runner == null)
+                        return false;
+
+                    PlayerRef player = sessionOrchestrator.CurrentPlayers
+                        .FirstOrDefault(p => sessionOrchestrator.ConvertPlayerToUserId(p) == userId);
+
+                    return Runner.IsSharedModeMasterClient && Runner.LocalPlayer == player;
+                },
+                CurrentHolderUserId,
+                CurrentQueueSnapshot,
+                tracker);
+
+            SharedUserCardStatsJsonNetworked = EncodeSharedUserCardStatsCompact(snapshot);
+            cachedSharedUserCardStats = snapshot;
+        }
+
+        private void PullSharedUserCardStats()
+        {
+            cachedSharedUserCardStats = DecodeSharedUserCardStatsCompact(SafeRead(SharedUserCardStatsJsonNetworked));
+        }
+
+        private void SubmitLocalLifecycleSnapshotIfNeeded()
+        {
+            if (!hasSpawned || SessionLifecycleTracker.Instance == null)
+                return;
+
+            string localUserId = GetLocalUserId();
+            if (string.IsNullOrWhiteSpace(localUserId) || localUserId == "UnknownUser")
+                return;
+
+            string rowJson = SessionLifecycleTracker.Instance.BuildBestRowJson(localUserId);
+            if (string.IsNullOrWhiteSpace(rowJson) ||
+                string.Equals(lastSubmittedLifecycleRowJson, rowJson, StringComparison.Ordinal))
+            {
+                return;
+            }
+
+            lastSubmittedLifecycleRowJson = rowJson;
+
+            if (Object != null && Object.HasStateAuthority)
+            {
+                SessionLifecycleTracker.Instance.ApplyRowJson(rowJson, localUserId);
+                return;
+            }
+
+            RPC_SubmitLifecycleSnapshot(rowJson);
+        }
+
+        private string BuildReplicatedStateSignature()
+        {
+            return string.Join("|", new[]
+            {
+                SessionStartedNetworked.ToString(),
+                QueueRuntimeActiveNetworked.ToString(),
+                SafeRead(CurrentInstrumentIdNetworked),
+                SafeRead(CurrentHolderUserIdNetworked),
+                SafeRead(CurrentQueueJoinedNetworked),
+                SafeRead(ReplicatedHistoryJoinedNetworked),
+                SafeRead(SharedUserCardStatsJsonNetworked)
+            });
+        }
+
+        private static string NormalizeHolderId(string holderUserId)
+        {
+            return string.IsNullOrWhiteSpace(holderUserId) ? "None" : holderUserId;
+        }
+
+        private string SafeRead(NetworkString<_64> value)
+        {
+            try
+            {
+                return value.ToString();
+            }
+            catch (Exception ex)
+            {
+                LogNetworkStringReadFailure(nameof(NetworkString<_64>), ex);
+                return string.Empty;
+            }
+        }
+
+        private string SafeRead(NetworkString<_512> value)
+        {
+            try
+            {
+                return value.ToString();
+            }
+            catch (Exception ex)
+            {
+                LogNetworkStringReadFailure(nameof(NetworkString<_512>), ex);
+                return string.Empty;
+            }
+        }
+
+        private void LogNetworkStringReadFailure(string fieldType, Exception ex)
+        {
+            if (!verboseLogs)
+                return;
+
+            Debug.LogWarning($"[SessionQueueRuntimeFusion] Ignored invalid {fieldType} payload while rendering replicated state: {ex.Message}", this);
+        }
+
+        private string EncodeSharedUserCardStatsCompact(UserCardStatsSnapshot snapshot)
+        {
+            if (snapshot == null || snapshot.users == null || snapshot.users.Count == 0)
+                return string.Empty;
+
+            List<string> encodedUsers = new List<string>();
+            foreach (UserCardStatsEntry entry in snapshot.users)
+            {
+                if (entry == null || string.IsNullOrWhiteSpace(entry.userId))
+                    continue;
+
+                encodedUsers.Add(string.Join("^", new[]
+                {
+                    EncodeField(entry.userId),
+                    entry.isMaster ? "1" : "0",
+                    entry.isHolder ? "1" : "0",
+                    entry.isWaiting ? "1" : "0",
+                    entry.requestCount.ToString(CultureInfo.InvariantCulture),
+                    entry.grantCount.ToString(CultureInfo.InvariantCulture),
+                    entry.releaseCount.ToString(CultureInfo.InvariantCulture),
+                    entry.timeoutCount.ToString(CultureInfo.InvariantCulture),
+                    entry.totalWaitSeconds.ToString("F3", CultureInfo.InvariantCulture),
+                    entry.totalUsageSeconds.ToString("F3", CultureInfo.InvariantCulture),
+                    EncodeField(entry.waitStartUtcIso),
+                    EncodeField(entry.usageStartUtcIso)
+                }));
+            }
+
+            return string.Join("||", encodedUsers);
+        }
+
+        private UserCardStatsSnapshot DecodeSharedUserCardStatsCompact(string encoded)
+        {
+            UserCardStatsSnapshot snapshot = new UserCardStatsSnapshot();
+            if (string.IsNullOrWhiteSpace(encoded))
+                return snapshot;
+
+            string[] encodedUsers = encoded.Split(new[] { "||" }, StringSplitOptions.RemoveEmptyEntries);
+            foreach (string encodedUser in encodedUsers)
+            {
+                string[] parts = encodedUser.Split('^');
+                if (parts.Length < 12)
+                    continue;
+
+                UserCardStatsEntry entry = new UserCardStatsEntry
+                {
+                    userId = DecodeField(parts[0]),
+                    displayName = DecodeField(parts[0]),
+                    isMaster = parts[1] == "1",
+                    isHolder = parts[2] == "1",
+                    isWaiting = parts[3] == "1",
+                    requestCount = ParseInt(parts[4]),
+                    grantCount = ParseInt(parts[5]),
+                    releaseCount = ParseInt(parts[6]),
+                    timeoutCount = ParseInt(parts[7]),
+                    totalWaitSeconds = ParseDouble(parts[8]),
+                    totalUsageSeconds = ParseDouble(parts[9]),
+                    waitStartUtcIso = DecodeField(parts[10]),
+                    usageStartUtcIso = DecodeField(parts[11])
+                };
+
+                entry.currentWaitSeconds = 0d;
+                entry.currentUsageSeconds = 0d;
+                snapshot.users.Add(entry);
+            }
+
+            return snapshot;
+        }
+
+        private string EncodeField(string value)
+        {
+            return string.IsNullOrWhiteSpace(value)
+                ? "-"
+                : value.Replace("%", "%25").Replace("^", "%5E").Replace("|", "%7C");
+        }
+
+        private string DecodeField(string value)
+        {
+            if (string.IsNullOrWhiteSpace(value) || value == "-")
+                return string.Empty;
+
+            return value.Replace("%7C", "|").Replace("%5E", "^").Replace("%25", "%");
+        }
+
+        private int ParseInt(string value)
+        {
+            return int.TryParse(value, NumberStyles.Integer, CultureInfo.InvariantCulture, out int parsed) ? parsed : 0;
+        }
+
+        private double ParseDouble(string value)
+        {
+            return double.TryParse(value, NumberStyles.Float, CultureInfo.InvariantCulture, out double parsed) ? parsed : 0d;
+        }
+
+        private void HandleDecisionAuthoritatively(string source, QueueDecision decision)
+        {
+            string holderBefore = CurrentHolderUserId;
+
+            string holderAfter = sharedLogic.GetCurrentHolder(CurrentInstrumentId);
+            List<string> queueSnapshotAfter = SplitJoinedString(sharedLogic.BuildJoinedQueue(CurrentInstrumentId));
+
+            sharedLogic.RecordDecisionAnalytics(
+                source,
+                decision,
+                CurrentInstrumentId,
+                holderBefore,
+                holderAfter,
+                queueSnapshotAfter);
+
+            BroadcastState(source);
+        }
+
+        private List<string> SplitJoinedString(string joined)
+        {
+            if (string.IsNullOrWhiteSpace(joined))
+                return new List<string>();
+
+            return new List<string>(joined.Split(new[] { "||" }, StringSplitOptions.RemoveEmptyEntries));
+        }
+
+        private string GetLocalUserId()
+        {
+            if (Runner != null && Runner.IsRunning)
+                return $"Player_{Runner.LocalPlayer.RawEncoded}";
+
+            if (sessionOrchestrator != null)
+            {
+                string userId = sessionOrchestrator.GetLocalUserId();
+                if (!string.IsNullOrWhiteSpace(userId) && userId != "UnknownUser")
+                    return userId;
+            }
+
+            return "UnknownUser";
+        }
+
+        private void TLog(string eventType, string userId, string instrumentId, string details)
+        {
+            TelemetryLoggerCore.Instance?.LogEvent(eventType, userId, instrumentId, details);
+        }
+
+        private void AddLocalStatus(string message)
+        {
+            Log(message);
+        }
+
+        private void Log(string message)
+        {
+            if (!verboseLogs)
+                return;
+
+            Debug.Log($"[SessionQueueRuntimeFusion] {message}", this);
+        }
+    }
+}

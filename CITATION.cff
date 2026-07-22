@@ -1,0 +1,12 @@
+cff-version: 1.2.0
+message: "Please cite the archived public release of VLab Orchestrator."
+title: "VLab Orchestrator"
+type: software
+version: 0.3.0-local
+date-released: 2026-07-03
+authors:
+  - family-names: Marmaras
+    given-names: Nikolaos
+abstract: >-
+  A Unity orchestration and evaluation layer for shared-access collaborative
+  applications across heterogeneous multiplayer networking backends.

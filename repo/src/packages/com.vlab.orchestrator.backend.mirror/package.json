@@ -1,0 +1,23 @@
+{
+  "name": "com.vlab.orchestrator.backend.mirror",
+  "displayName": "VLab Orchestrator Backend - Mirror",
+  "version": "0.3.0",
+  "unity": "6000.3",
+  "description": "Optional Mirror adapter boundary and project-authored reference source.",
+  "dependencies": {
+    "com.vlab.orchestrator.core": "0.3.0",
+    "com.unity.ai.navigation": "2.0.11",
+    "com.unity.nuget.newtonsoft-json": "3.2.2",
+    "com.unity.ugui": "2.0.0",
+    "com.unity.modules.ai": "1.0.0",
+    "com.unity.modules.animation": "1.0.0",
+    "com.unity.modules.audio": "1.0.0",
+    "com.unity.modules.particlesystem": "1.0.0",
+    "com.unity.modules.physics": "1.0.0",
+    "com.unity.modules.physics2d": "1.0.0",
+    "com.unity.modules.terrain": "1.0.0",
+    "com.unity.modules.terrainphysics": "1.0.0",
+    "com.unity.modules.uielements": "1.0.0",
+    "com.unity.modules.unitywebrequest": "1.0.0"
+  }
+}

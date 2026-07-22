@@ -1,0 +1,14 @@
+PRIVATE PUBLICATION-PREPARATION NOTICE
+
+Copyright (c) 2026 Nikolaos Marmaras.
+
+This local repository is being prepared for a future open-source research
+software release. No license to use, copy, modify, merge, publish, distribute,
+sublicense, or sell the software is granted by this temporary notice.
+
+Before public release, this file must be replaced with an Open Source Initiative
+approved license after authorship, institutional ownership, inherited-code, and
+asset rights have been confirmed.
+
+Third-party software is not covered by this notice and remains subject to its
+own license terms.

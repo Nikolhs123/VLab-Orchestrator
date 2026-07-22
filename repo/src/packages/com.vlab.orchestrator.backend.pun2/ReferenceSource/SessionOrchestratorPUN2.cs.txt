@@ -1,0 +1,569 @@
+using System;
+using System.Collections.Generic;
+using System.Linq;
+using Photon.Pun;
+using Photon.Realtime;
+using Thesis.Orchestration.Runtime;
+using Thesis.Orchestration.SharedSync;
+using Thesis.Orchestration.Telemetry;
+using UnityEngine;
+
+namespace Thesis.Orchestration.Backends.PUN2
+{
+    public class SessionOrchestratorPUN2 : MonoBehaviourPunCallbacks
+    {
+        public static SessionOrchestratorPUN2 Instance { get; private set; }
+
+        [Header("Photon Settings")]
+        [SerializeField] private bool autoConnectOnStart = true;
+        [SerializeField] private string gameVersion = "0.1";
+
+        [Header("Room Settings")]
+        [SerializeField] private byte maxPlayersPerRoom = 8;
+        [SerializeField] private bool spawnQueueRuntimeAutomatically = true;
+
+        [Header("Debug")]
+        [SerializeField] private bool verboseLogs = true;
+
+        public bool IsConnectedToMasterServer { get; private set; }
+        public bool IsInRoom => PhotonNetwork.InRoom;
+        public bool IsMasterClient => PhotonNetwork.IsMasterClient;
+        public bool SessionStarted { get; private set; }
+        public string CurrentRoomName => PhotonNetwork.InRoom ? PhotonNetwork.CurrentRoom.Name : "None";
+
+        public IReadOnlyList<Player> CurrentPlayers => cachedPlayers;
+        public IReadOnlyList<RoomInfo> AvailableRooms => cachedRooms;
+
+        private readonly List<Player> cachedPlayers = new();
+        private readonly List<RoomInfo> cachedRooms = new();
+        private GameObject spawnedQueueRuntimeObject;
+
+        public event Action OnConnectedToServer;
+        public event Action<string> OnConnectionFailed;
+        public event Action<string> OnRoomCreated;
+        public event Action<string> OnRoomJoined;
+        public event Action<List<Player>> OnPlayerListUpdated;
+        public event Action<List<RoomInfo>> OnRoomListUpdatedEvent;
+        public event Action<bool> OnSessionStateChanged;
+        public event Action<string> OnStatusMessage;
+
+        private const string SessionStartedRoomPropertyKey = "SESSION_STARTED";
+        private bool isCleaningUpRuntime;
+
+        private void Awake()
+        {
+            if (Instance != null && Instance != this)
+            {
+                Debug.LogWarning("[SessionOrchestratorPUN2] Duplicate instance found. Destroying duplicate.", this);
+                Destroy(gameObject);
+                return;
+            }
+
+            Instance = this;
+        }
+
+        private void Start()
+        {
+            ApplyConfiguredPhotonNickname();
+            PhotonNetwork.AutomaticallySyncScene = false;
+            PhotonNetwork.GameVersion = gameVersion;
+
+            if (autoConnectOnStart)
+                ConnectToServer();
+        }
+
+        private void OnDestroy()
+        {
+            if (Instance != null && Instance != this)
+                return;
+
+            if (Instance == this)
+                Instance = null;
+
+            CleanupPhotonRuntimeState("OnDestroy");
+        }
+
+        private void OnApplicationQuit()
+        {
+            if (Instance != null && Instance != this)
+                return;
+
+            CleanupPhotonRuntimeState("OnApplicationQuit");
+        }
+
+        private string GetLifecycleClientId()
+        {
+            return PhotonNetwork.LocalPlayer != null &&
+                   PhotonNetwork.LocalPlayer.ActorNumber > 0
+                ? $"Actor_{PhotonNetwork.LocalPlayer.ActorNumber}"
+                : "PUN2_LocalClient";
+        }
+
+        public void ConnectToServer()
+        {
+            ApplyConfiguredPhotonNickname();
+
+            if (PhotonNetwork.IsConnected)
+            {
+                Log("Already connected to Photon.");
+                IsConnectedToMasterServer = true;
+                OnConnectedToServer?.Invoke();
+                RaiseStatus("Already connected.");
+                SessionLifecycleTracker.Instance?.MarkConnectSucceeded(GetLifecycleClientId());
+                return;
+            }
+
+            SessionLifecycleTracker.Instance?.MarkConnectStarted(GetLifecycleClientId());
+
+            bool result = PhotonNetwork.ConnectUsingSettings();
+            Log($"ConnectUsingSettings result: {result}");
+            RaiseStatus("Connecting to Photon server...");
+            TLog("ConnectRequested", GetLocalUserId(), "None", "Requested connection to Photon.");
+        }
+
+        public void CreateRoom(string roomName)
+        {
+            ApplyConfiguredPhotonNickname();
+
+            if (!PhotonNetwork.IsConnectedAndReady)
+            {
+                RaiseStatus("Cannot create room: not connected.");
+                return;
+            }
+
+            if (string.IsNullOrWhiteSpace(roomName))
+            {
+                RaiseStatus("Cannot create room: empty room name.");
+                return;
+            }
+
+            SessionLifecycleTracker.Instance?.MarkCreateStarted(GetLifecycleClientId());
+
+            RoomOptions options = new RoomOptions
+            {
+                MaxPlayers = maxPlayersPerRoom,
+                IsVisible = true,
+                IsOpen = true,
+                CustomRoomProperties = new ExitGames.Client.Photon.Hashtable
+                {
+                    { SessionStartedRoomPropertyKey, false }
+                },
+                CustomRoomPropertiesForLobby = new[] { SessionStartedRoomPropertyKey }
+            };
+
+            PhotonNetwork.CreateRoom(roomName, options);
+            RaiseStatus($"Creating room '{roomName}'...");
+            Log($"[CreateRoom] Name={roomName}, Region={PhotonNetwork.CloudRegion}, GameVersion={PhotonNetwork.GameVersion}, Ready={PhotonNetwork.IsConnectedAndReady}");
+            TLog("CreateRoomRequested", GetLocalUserId(), roomName, "Requested room creation.");
+        }
+
+        public void JoinRoom(string roomName)
+        {
+            ApplyConfiguredPhotonNickname();
+
+            if (!PhotonNetwork.IsConnectedAndReady)
+            {
+                RaiseStatus("Cannot join room: not connected.");
+                return;
+            }
+
+            if (string.IsNullOrWhiteSpace(roomName))
+            {
+                RaiseStatus("Cannot join room: empty room name.");
+                return;
+            }
+
+            if (!RoomExists(roomName))
+            {
+                RaiseStatus($"Cannot join room: '{roomName}' does not exist.");
+                return;
+            }
+
+            SessionLifecycleTracker.Instance?.MarkJoinStarted(GetLifecycleClientId());
+
+            PhotonNetwork.JoinRoom(roomName);
+            RaiseStatus($"Joining room '{roomName}'...");
+            Log($"[JoinRoom] Name={roomName}, Region={PhotonNetwork.CloudRegion}, GameVersion={PhotonNetwork.GameVersion}, Ready={PhotonNetwork.IsConnectedAndReady}");
+            TLog("JoinRoomRequested", GetLocalUserId(), roomName, "Requested room join.");
+        }
+
+        public void LeaveRoom()
+        {
+            if (!PhotonNetwork.InRoom)
+            {
+                RaiseStatus("Cannot leave room: not currently in a room.");
+                return;
+            }
+
+            if (PhotonNetwork.IsMasterClient)
+                SessionQueueRuntimePUN2.Instance?.TryForceReleaseCurrentHolderForFinalization("Session leave");
+            TLog("LeaveRoomRequested", GetLocalUserId(), CurrentRoomName, "Requested to leave room.");
+            PhotonNetwork.LeaveRoom();
+            RaiseStatus("Leaving room...");
+        }
+
+        public void BeginSession()
+        {
+            if (!PhotonNetwork.InRoom)
+            {
+                RaiseStatus("Cannot begin session: not in a room.");
+                return;
+            }
+
+            if (!PhotonNetwork.IsMasterClient)
+            {
+                RaiseStatus("Only the Master Client can begin the session.");
+                return;
+            }
+
+            EnsureQueueRuntimeSpawned();
+            SessionLifecycleTracker.Instance?.MarkSessionStartPressed(GetLifecycleClientId());
+
+            ExitGames.Client.Photon.Hashtable properties = new ExitGames.Client.Photon.Hashtable
+            {
+                { SessionStartedRoomPropertyKey, true }
+            };
+
+            PhotonNetwork.CurrentRoom.SetCustomProperties(properties);
+            RaiseStatus("Session started.");
+            NetworkAvatarSpawnerPUN2.Instance?.TrySpawnAvatar();
+            TLog("SessionStarted", GetLocalUserId(), CurrentRoomName, "Master client started session.");
+        }
+
+        public bool GetSessionStartedFromRoomProperties()
+        {
+            if (!PhotonNetwork.InRoom || PhotonNetwork.CurrentRoom.CustomProperties == null)
+                return false;
+
+            if (PhotonNetwork.CurrentRoom.CustomProperties.TryGetValue(SessionStartedRoomPropertyKey, out object value) &&
+                value is bool started)
+            {
+                return started;
+            }
+
+            return false;
+        }
+
+        public bool RoomExists(string roomName)
+        {
+            if (string.IsNullOrWhiteSpace(roomName))
+                return false;
+
+            return cachedRooms.Any(r => r != null && r.Name == roomName && !r.RemovedFromList);
+        }
+
+        private void RefreshPlayerCache()
+        {
+            cachedPlayers.Clear();
+
+            if (PhotonNetwork.InRoom && PhotonNetwork.CurrentRoom != null)
+                cachedPlayers.AddRange(PhotonNetwork.CurrentRoom.Players.Values.OrderBy(p => p.ActorNumber));
+
+            OnPlayerListUpdated?.Invoke(new List<Player>(cachedPlayers));
+        }
+
+        private void RefreshRoomCache(List<RoomInfo> roomList)
+        {
+            if (roomList == null)
+                return;
+
+            foreach (RoomInfo room in roomList)
+            {
+                if (room == null)
+                    continue;
+
+                int existingIndex = cachedRooms.FindIndex(r => r.Name == room.Name);
+
+                if (room.RemovedFromList)
+                {
+                    if (existingIndex >= 0)
+                        cachedRooms.RemoveAt(existingIndex);
+                }
+                else
+                {
+                    if (existingIndex >= 0)
+                        cachedRooms[existingIndex] = room;
+                    else
+                        cachedRooms.Add(room);
+                }
+            }
+
+            OnRoomListUpdatedEvent?.Invoke(new List<RoomInfo>(cachedRooms));
+        }
+
+        private void EnsureQueueRuntimeSpawned()
+        {
+            if (!spawnQueueRuntimeAutomatically || !PhotonNetwork.InRoom || !PhotonNetwork.IsMasterClient)
+                return;
+
+            if (SessionQueueRuntimePUN2.Instance != null)
+            {
+                spawnedQueueRuntimeObject = SessionQueueRuntimePUN2.Instance.gameObject;
+                return;
+            }
+
+            if (spawnedQueueRuntimeObject != null)
+                return;
+
+            try
+            {
+                spawnedQueueRuntimeObject = PhotonNetwork.InstantiateRoomObject(
+                    OrchestrationRuntimePrefabPaths.PUN2QueueRuntimeResourcesPath,
+                    Vector3.zero,
+                    Quaternion.identity);
+
+                if (spawnedQueueRuntimeObject != null)
+                    RaiseStatus("Spawned PUN2 queue runtime room object.");
+            }
+            catch (Exception ex)
+            {
+                RaiseStatus($"Failed to spawn PUN2 queue runtime room object: {ex.Message}");
+            }
+        }
+
+        private void UpdateSessionStateFromRoomProperties()
+        {
+            bool previous = SessionStarted;
+            SessionStarted = GetSessionStartedFromRoomProperties();
+
+            if (!previous && SessionStarted)
+                SessionLifecycleTracker.Instance?.MarkSessionStartVisible(GetLifecycleClientId());
+
+            OnSessionStateChanged?.Invoke(SessionStarted);
+        }
+
+        private void RaiseStatus(string message)
+        {
+            Log(message);
+            OnStatusMessage?.Invoke(message);
+        }
+
+        private void ResetLocalState(bool notifyObservers)
+        {
+            IsConnectedToMasterServer = false;
+            SessionStarted = false;
+            spawnedQueueRuntimeObject = null;
+            cachedPlayers.Clear();
+            cachedRooms.Clear();
+
+            if (!notifyObservers)
+                return;
+
+            OnPlayerListUpdated?.Invoke(new List<Player>(cachedPlayers));
+            OnRoomListUpdatedEvent?.Invoke(new List<RoomInfo>(cachedRooms));
+            OnSessionStateChanged?.Invoke(SessionStarted);
+        }
+
+        private void CleanupPhotonRuntimeState(string source)
+        {
+            if (isCleaningUpRuntime)
+                return;
+
+            if (!Application.isPlaying)
+                return;
+
+            if (!PhotonNetwork.IsConnected && !PhotonNetwork.InRoom)
+                return;
+
+            isCleaningUpRuntime = true;
+
+            try
+            {
+                if (PhotonNetwork.IsMasterClient)
+                    SessionQueueRuntimePUN2.Instance?.TryForceReleaseCurrentHolderForFinalization(source);
+                ResetLocalState(notifyObservers: false);
+
+                if (PhotonNetwork.InRoom)
+                {
+                    Log($"[{source}] Leaving Photon room during runtime cleanup.");
+                    PhotonNetwork.LeaveRoom(false);
+                }
+
+                if (PhotonNetwork.IsConnected)
+                {
+                    Log($"[{source}] Disconnecting Photon during runtime cleanup.");
+                    PhotonNetwork.Disconnect();
+                }
+            }
+            catch (Exception ex)
+            {
+                Debug.LogWarning($"[SessionOrchestratorPUN2] Runtime cleanup failed during {source}: {ex.Message}", this);
+            }
+        }
+
+        private void Log(string message)
+        {
+            if (!verboseLogs)
+                return;
+
+            Debug.Log($"[SessionOrchestratorPUN2] {message}");
+        }
+
+        private void ApplyConfiguredPhotonNickname()
+        {
+            string configuredName = OrchestrationPlayerNameRegistry.GetLocalPlayerName();
+            if (string.IsNullOrWhiteSpace(configuredName))
+                return;
+
+            if (!string.Equals(PhotonNetwork.NickName, configuredName, StringComparison.Ordinal))
+                PhotonNetwork.NickName = configuredName;
+        }
+
+        private string GetLocalUserId()
+        {
+            return PhotonNetwork.LocalPlayer != null
+                ? $"Actor_{PhotonNetwork.LocalPlayer.ActorNumber}"
+                : "UnknownUser";
+        }
+
+        private void TLog(string eventType, string userId, string instrumentId, string details)
+        {
+            TelemetryLoggerCore.Instance?.LogEvent(eventType, userId, instrumentId, details);
+        }
+
+        public override void OnConnectedToMaster()
+        {
+            base.OnConnectedToMaster();
+
+            IsConnectedToMasterServer = true;
+            RaiseStatus("Connected to Photon master server.");
+            OnConnectedToServer?.Invoke();
+            PhotonNetwork.JoinLobby();
+            TLog("ConnectedToMaster", GetLocalUserId(), "None", "Connected to Photon master server.");
+            SessionLifecycleTracker.Instance?.MarkConnectSucceeded(GetLifecycleClientId());
+        }
+
+        public override void OnJoinedLobby()
+        {
+            base.OnJoinedLobby();
+            RaiseStatus("Joined Photon lobby.");
+            TLog("JoinedLobby", GetLocalUserId(), "None", "Joined Photon lobby.");
+        }
+
+        public override void OnDisconnected(DisconnectCause cause)
+        {
+            base.OnDisconnected(cause);
+
+            isCleaningUpRuntime = false;
+            ResetLocalState(notifyObservers: false);
+
+            string msg = $"Disconnected from Photon. Cause: {cause}";
+            RaiseStatus(msg);
+            OnConnectionFailed?.Invoke(msg);
+            OnPlayerListUpdated?.Invoke(new List<Player>(cachedPlayers));
+            OnRoomListUpdatedEvent?.Invoke(new List<RoomInfo>(cachedRooms));
+            OnSessionStateChanged?.Invoke(SessionStarted);
+            TLog("Disconnected", GetLocalUserId(), CurrentRoomName, $"Disconnected. Cause={cause}");
+        }
+
+        public override void OnCreatedRoom()
+        {
+            base.OnCreatedRoom();
+
+            RaiseStatus($"Room created: {PhotonNetwork.CurrentRoom.Name}");
+            OnRoomCreated?.Invoke(PhotonNetwork.CurrentRoom.Name);
+            Log($"[OnCreatedRoom] Room={PhotonNetwork.CurrentRoom?.Name}, Region={PhotonNetwork.CloudRegion}, GameVersion={PhotonNetwork.GameVersion}");
+            TLog("RoomCreated", GetLocalUserId(), PhotonNetwork.CurrentRoom.Name, "Room created successfully.");
+            SessionLifecycleTracker.Instance?.MarkCreateSucceeded(GetLifecycleClientId());
+        }
+
+        public override void OnCreateRoomFailed(short returnCode, string message)
+        {
+            base.OnCreateRoomFailed(returnCode, message);
+            RaiseStatus($"Create room failed: {message} ({returnCode})");
+            OnConnectionFailed?.Invoke($"Create room failed: {message} ({returnCode})");
+            TLog("CreateRoomFailed", GetLocalUserId(), "None", $"ReturnCode={returnCode}, Message={message}");
+        }
+
+        public override void OnJoinedRoom()
+        {
+            base.OnJoinedRoom();
+
+            SessionLifecycleTracker.Instance?.MergeClientRow("PUN2_LocalClient", GetLifecycleClientId());
+            SessionLifecycleTracker.Instance?.MarkJoinSucceeded(GetLifecycleClientId());
+
+            UpdateSessionStateFromRoomProperties();
+            RefreshPlayerCache();
+            EnsureQueueRuntimeSpawned();
+
+            RaiseStatus($"Joined room: {PhotonNetwork.CurrentRoom.Name}");
+            OnRoomJoined?.Invoke(PhotonNetwork.CurrentRoom.Name);
+            Log($"[OnJoinedRoom] Room={PhotonNetwork.CurrentRoom?.Name}, Region={PhotonNetwork.CloudRegion}, GameVersion={PhotonNetwork.GameVersion}");
+            TLog("RoomJoined", GetLocalUserId(), PhotonNetwork.CurrentRoom.Name, "Joined room successfully.");
+        }
+
+        public override void OnJoinRoomFailed(short returnCode, string message)
+        {
+            base.OnJoinRoomFailed(returnCode, message);
+            RaiseStatus($"Join room failed: {message} ({returnCode})");
+            OnConnectionFailed?.Invoke($"Join room failed: {message} ({returnCode})");
+            TLog("JoinRoomFailed", GetLocalUserId(), "None", $"ReturnCode={returnCode}, Message={message}");
+        }
+
+        public override void OnRoomListUpdate(List<RoomInfo> roomList)
+        {
+            base.OnRoomListUpdate(roomList);
+            RefreshRoomCache(roomList);
+
+            Debug.Log($"[SessionOrchestratorPUN2] OnRoomListUpdate received. Count={roomList.Count}");
+            foreach (RoomInfo room in roomList)
+            {
+                if (room != null)
+                    Debug.Log($"[SessionOrchestratorPUN2] Room: {room.Name}, Removed={room.RemovedFromList}, Players={room.PlayerCount}/{room.MaxPlayers}");
+            }
+        }
+
+        public override void OnPlayerEnteredRoom(Player newPlayer)
+        {
+            base.OnPlayerEnteredRoom(newPlayer);
+            RefreshPlayerCache();
+            EnsureQueueRuntimeSpawned();
+            RaiseStatus($"Player joined: {newPlayer.NickName} ({newPlayer.ActorNumber})");
+            TLog("PlayerEnteredRoom", $"Actor_{newPlayer.ActorNumber}", CurrentRoomName, $"{newPlayer.NickName} entered room.");
+        }
+
+        public override void OnPlayerLeftRoom(Player otherPlayer)
+        {
+            base.OnPlayerLeftRoom(otherPlayer);
+            RefreshPlayerCache();
+            RaiseStatus($"Player left: {otherPlayer.NickName} ({otherPlayer.ActorNumber})");
+            TLog("PlayerLeftRoom", $"Actor_{otherPlayer.ActorNumber}", CurrentRoomName, $"{otherPlayer.NickName} left room.");
+        }
+
+        public override void OnLeftRoom()
+        {
+            base.OnLeftRoom();
+
+            isCleaningUpRuntime = false;
+            SessionStarted = false;
+            spawnedQueueRuntimeObject = null;
+            cachedPlayers.Clear();
+
+            RaiseStatus("Left room.");
+            OnPlayerListUpdated?.Invoke(new List<Player>(cachedPlayers));
+            OnSessionStateChanged?.Invoke(SessionStarted);
+            TLog("LeftRoom", GetLocalUserId(), "None", "Left current room.");
+        }
+
+        public override void OnMasterClientSwitched(Player newMasterClient)
+        {
+            base.OnMasterClientSwitched(newMasterClient);
+            EnsureQueueRuntimeSpawned();
+            RaiseStatus($"New Master Client: {newMasterClient.NickName} ({newMasterClient.ActorNumber})");
+            RefreshPlayerCache();
+            TLog("MasterClientSwitched", $"Actor_{newMasterClient.ActorNumber}", CurrentRoomName, $"{newMasterClient.NickName} became master client.");
+        }
+
+        public override void OnRoomPropertiesUpdate(ExitGames.Client.Photon.Hashtable propertiesThatChanged)
+        {
+            base.OnRoomPropertiesUpdate(propertiesThatChanged);
+
+            if (propertiesThatChanged.ContainsKey(SessionStartedRoomPropertyKey))
+            {
+                UpdateSessionStateFromRoomProperties();
+                RaiseStatus(SessionStarted ? "Session state updated: STARTED" : "Session state updated: NOT STARTED");
+                TLog("SessionStateUpdated", GetLocalUserId(), CurrentRoomName, $"SessionStarted={SessionStarted}");
+            }
+        }
+    }
+}

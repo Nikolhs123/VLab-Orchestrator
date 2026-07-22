@@ -1,0 +1,275 @@
+using System.Collections.Generic;
+using Thesis.Orchestration.SharedSync;
+using UnityEngine;
+using MirrorNetworkConnectionToClient = global::Mirror.NetworkConnectionToClient;
+using MirrorNetworkIdentity = global::Mirror.NetworkIdentity;
+using MirrorNetworkManager = global::Mirror.NetworkManager;
+using MirrorNetworkServer = global::Mirror.NetworkServer;
+
+namespace Thesis.Orchestration.Backends.Mirror
+{
+    public class NetworkAvatarSpawnerMirror : MonoBehaviour
+    {
+        public static NetworkAvatarSpawnerMirror Instance { get; private set; }
+
+        [Header("References")]
+        [SerializeField] private SessionOrchestratorMirror sessionOrchestrator;
+        [SerializeField] private MirrorNetworkManager networkManager;
+
+        [Header("Prefab")]
+        [SerializeField] private GameObject avatarPrefab;
+        [SerializeField] private bool spawnAutomaticallyForLateJoiners = true;
+
+        [Header("Debug")]
+        [SerializeField] private bool verboseLogs = true;
+
+        private readonly Dictionary<int, MirrorNetworkIdentity> spawnedAvatars = new();
+
+        private void Awake()
+        {
+            if (Instance != null && Instance != this)
+            {
+                Destroy(gameObject);
+                return;
+            }
+
+            Instance = this;
+            ResolveReferences();
+        }
+
+        private void OnEnable()
+        {
+            ResolveReferences();
+            RegisterSharedAvatarPrefabIfNeeded();
+        }
+
+        private void OnDestroy()
+        {
+            spawnedAvatars.Clear();
+
+            if (Instance == this)
+                Instance = null;
+        }
+
+        private void Update()
+        {
+            ResolveReferences();
+            RegisterSharedAvatarPrefabIfNeeded();
+            PruneSpawnedAvatars();
+
+            if (!spawnAutomaticallyForLateJoiners || sessionOrchestrator == null || !sessionOrchestrator.SessionStarted)
+                return;
+
+            EnsureSpawnForConnectedClients();
+            DespawnDisconnectedClientAvatars();
+        }
+
+        public void ConfigureRuntime(SessionOrchestratorMirror orchestrator, MirrorNetworkManager manager)
+        {
+            sessionOrchestrator = orchestrator;
+            networkManager = manager;
+            ResolveReferences();
+        }
+
+        public void RequestSpawnForLocalClient()
+        {
+            EnsureSpawnForConnectedClients();
+        }
+
+        public void EnsureSpawnForConnectedClients()
+        {
+            ResolveReferences();
+            RegisterSharedAvatarPrefabIfNeeded();
+
+            if (!MirrorNetworkServer.active)
+                return;
+
+            if (sessionOrchestrator != null && sessionOrchestrator.CurrentPlayers != null)
+            {
+                foreach (int clientId in sessionOrchestrator.CurrentPlayers)
+                    TrySpawnAvatar(clientId);
+
+                return;
+            }
+
+            foreach (KeyValuePair<int, MirrorNetworkConnectionToClient> pair in MirrorNetworkServer.connections)
+            {
+                if (pair.Value != null)
+                    TrySpawnAvatar(pair.Key);
+            }
+        }
+
+        public void RegisterSharedAvatarPrefabIfNeeded()
+        {
+            ResolveReferences();
+
+            if (networkManager == null)
+                return;
+
+            GameObject prefabToRegister = ResolveAvatarPrefab();
+            if (prefabToRegister == null)
+                return;
+
+            if (!networkManager.spawnPrefabs.Contains(prefabToRegister))
+                networkManager.spawnPrefabs.Add(prefabToRegister);
+
+            MirrorNetworkIdentity identity = prefabToRegister.GetComponent<MirrorNetworkIdentity>();
+            if (identity != null && !global::Mirror.NetworkClient.prefabs.ContainsKey(identity.assetId))
+                global::Mirror.NetworkClient.RegisterPrefab(prefabToRegister);
+        }
+
+        public void TrySpawnAvatar(int clientId)
+        {
+            ResolveReferences();
+            PruneSpawnedAvatars();
+            RegisterSharedAvatarPrefabIfNeeded();
+
+            if (!MirrorNetworkServer.active)
+            {
+                Log($"Spawn skipped for Client_{clientId} because Mirror server is not running.");
+                return;
+            }
+
+            if (spawnedAvatars.TryGetValue(clientId, out MirrorNetworkIdentity cachedAvatar) &&
+                cachedAvatar != null &&
+                cachedAvatar.netId != 0)
+            {
+                return;
+            }
+
+            GameObject prefabToSpawn = ResolveAvatarPrefab();
+            if (prefabToSpawn == null)
+            {
+                Log("Spawn skipped because avatar prefab is missing or invalid.");
+                return;
+            }
+
+            MirrorNetworkConnectionToClient ownerConnection = ResolveOwnerConnection(clientId);
+            if (ownerConnection == null)
+            {
+                Log($"Spawn skipped for Client_{clientId} because no matching Mirror connection was found.");
+                return;
+            }
+
+            GameObject avatarObject = Instantiate(prefabToSpawn);
+            avatarObject.name = $"{prefabToSpawn.name} [Client_{clientId}]";
+
+            MirrorNetworkIdentity avatarIdentity = avatarObject.GetComponent<MirrorNetworkIdentity>();
+            if (avatarIdentity == null)
+            {
+                Destroy(avatarObject);
+                Log("Spawn skipped because instantiated avatar prefab is missing NetworkIdentity.");
+                return;
+            }
+
+            MirrorNetworkServer.Spawn(avatarObject, ownerConnection);
+            spawnedAvatars[clientId] = avatarIdentity;
+            Log($"Spawned Mirror avatar for Client_{clientId}.");
+        }
+
+        private void ResolveReferences()
+        {
+            sessionOrchestrator ??= SessionOrchestratorMirror.Instance;
+
+            if (sessionOrchestrator == null)
+                sessionOrchestrator = FindFirstObjectByType<SessionOrchestratorMirror>();
+
+            if (networkManager == null && sessionOrchestrator != null)
+                networkManager = sessionOrchestrator.NetworkManager;
+
+            if (networkManager == null)
+                networkManager = FindFirstObjectByType<MirrorNetworkManager>();
+        }
+
+        private GameObject ResolveAvatarPrefab()
+        {
+            string preferredPath = SharedAvatarRuntimeUtility.ResolveAvatarPrefabResourcesPath();
+            GameObject preferred = Resources.Load<GameObject>(preferredPath);
+            if (IsMirrorAvatarPrefabValid(preferred))
+            {
+                avatarPrefab = preferred;
+                return avatarPrefab;
+            }
+
+            if (IsMirrorAvatarPrefabValid(avatarPrefab))
+                return avatarPrefab;
+
+            GameObject fallback = Resources.Load<GameObject>(SharedAvatarRuntimeUtility.DefaultAvatarPrefabResourcesPath);
+            avatarPrefab = fallback;
+            return IsMirrorAvatarPrefabValid(avatarPrefab) ? avatarPrefab : null;
+        }
+
+        private static bool IsMirrorAvatarPrefabValid(GameObject candidate)
+        {
+            if (candidate == null)
+                return false;
+
+            return candidate.GetComponent<MirrorNetworkIdentity>() != null &&
+                   candidate.GetComponent<UserPresenceTransformSyncMirror>() != null &&
+                   SharedAvatarRuntimeUtility.HasCompatibleFollowAnchor(candidate);
+        }
+
+        private MirrorNetworkConnectionToClient ResolveOwnerConnection(int clientId)
+        {
+            if (MirrorNetworkServer.connections.TryGetValue(clientId, out MirrorNetworkConnectionToClient connection))
+                return connection;
+
+            return null;
+        }
+
+        private void PruneSpawnedAvatars()
+        {
+            if (spawnedAvatars.Count == 0)
+                return;
+
+            List<int> staleClientIds = null;
+            foreach (KeyValuePair<int, MirrorNetworkIdentity> pair in spawnedAvatars)
+            {
+                if (pair.Value != null && pair.Value.netId != 0)
+                    continue;
+
+                staleClientIds ??= new List<int>();
+                staleClientIds.Add(pair.Key);
+            }
+
+            if (staleClientIds == null)
+                return;
+
+            foreach (int clientId in staleClientIds)
+                spawnedAvatars.Remove(clientId);
+        }
+
+        private void DespawnDisconnectedClientAvatars()
+        {
+            if (!MirrorNetworkServer.active || spawnedAvatars.Count == 0)
+                return;
+
+            List<int> clientIdsToRemove = null;
+            foreach (KeyValuePair<int, MirrorNetworkIdentity> pair in spawnedAvatars)
+            {
+                if (MirrorNetworkServer.connections.ContainsKey(pair.Key))
+                    continue;
+
+                if (pair.Value != null)
+                    MirrorNetworkServer.Destroy(pair.Value.gameObject);
+
+                clientIdsToRemove ??= new List<int>();
+                clientIdsToRemove.Add(pair.Key);
+            }
+
+            if (clientIdsToRemove == null)
+                return;
+
+            foreach (int clientId in clientIdsToRemove)
+                spawnedAvatars.Remove(clientId);
+        }
+
+        private void Log(string message)
+        {
+            if (!verboseLogs)
+                return;
+
+            Debug.Log($"[NetworkAvatarSpawnerMirror] {message}", this);
+        }
+    }
+}

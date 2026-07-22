@@ -1,0 +1,17 @@
+{
+  "name": "com.vlab.orchestrator.core",
+  "displayName": "VLab Orchestrator Core",
+  "version": "0.3.0",
+  "unity": "6000.3",
+  "description": "Backend-independent access allocation, configuration, benchmark protocol, and editor workspace for collaborative Unity research applications.",
+  "keywords": [
+    "multiplayer",
+    "orchestration",
+    "research",
+    "benchmark",
+    "virtual laboratory"
+  ],
+  "author": {
+    "name": "Nikolaos Marmaras"
+  }
+}

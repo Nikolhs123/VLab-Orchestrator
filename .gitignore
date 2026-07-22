@@ -1,0 +1,70 @@
+# Unity generated directories
+[Ll]ibrary/
+[Tt]emp/
+[Oo]bj/
+[Bb]uild/
+[Bb]uilds/
+[Ll]ogs/
+[Uu]ser[Ss]ettings/
+[Mm]emoryCaptures/
+[Rr]ecordings/
+
+# IDE files
+.vs/
+.vscode/
+.idea/
+*.csproj
+*.sln
+*.slnx
+*.unityproj
+*.user
+*.userprefs
+*.pidb
+*.booproj
+*.svd
+*.pdb
+*.mdb
+*.opendb
+*.VC.db
+
+# Operating-system files
+.DS_Store
+Thumbs.db
+Desktop.ini
+
+# Build and export artifacts
+artifacts/
+exports/
+[Ee]valuation[Ee]xports/
+*.apk
+*.aab
+*.app
+*.unitypackage
+
+# Credentials and backend application settings
+*.env
+*.env.*
+secrets/
+PhotonServerSettings.asset
+PhotonAppSettings.asset
+NetworkProjectConfig.fusion
+
+# Vendor networking SDKs are installed locally from their official providers
+/repo/src/showcase/UnityProject/Assets/Photon/
+/repo/src/showcase/UnityProject/Assets/Photon.meta
+/repo/src/showcase/UnityProject/Assets/FishNet/
+/repo/src/showcase/UnityProject/Assets/FishNet.meta
+/repo/src/showcase/UnityProject/Assets/Mirror/
+/repo/src/showcase/UnityProject/Assets/Mirror.meta
+/repo/src/showcase/UnityProject/Assets/ScriptTemplates/
+/repo/src/showcase/UnityProject/Assets/ScriptTemplates.meta
+
+# Reproducibly materialized after the licensed SDK matrix is installed
+/repo/src/showcase/UnityProject/Assets/GeneratedSoftwareXRuntime/
+/repo/src/showcase/UnityProject/Assets/GeneratedSoftwareXRuntime.meta
+/repo/src/showcase/UnityProject/Assets/Resources/AIMultiplayerAssistant/
+/repo/src/showcase/UnityProject/Assets/Resources/AIMultiplayerAssistant.meta
+/repo/src/showcase/UnityProject/Assets/DefaultNetworkPrefabs.asset
+/repo/src/showcase/UnityProject/Assets/DefaultNetworkPrefabs.asset.meta
+/repo/src/showcase/UnityProject/Assets/DefaultPrefabObjects.asset
+/repo/src/showcase/UnityProject/Assets/DefaultPrefabObjects.asset.meta

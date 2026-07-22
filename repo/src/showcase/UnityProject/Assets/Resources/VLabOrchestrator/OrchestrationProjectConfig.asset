@@ -1,0 +1,49 @@
+%YAML 1.1
+%TAG !u! tag:unity3d.com,2011:
+--- !u!114 &11400000
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 0}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 0bb29d983e8fea04ca2c310eccaaf7e9, type: 3}
+  m_Name: OrchestrationProjectConfig
+  m_EditorClassIdentifier: VLab.Orchestrator.Core::VLabOrchestrator.Runtime.OrchestrationProjectConfig
+  backendType: 4
+  participantVisualPrefab: {fileID: 167950089625244001, guid: b11497b153e8fe94d921ab1d7c327384, type: 3}
+  primarySharedInstrumentPrefab: {fileID: 5883512752630533710, guid: 751637389e650584cbab4099a050c74e, type: 3}
+  additionalSharedInstruments: []
+  standaloneSharedObjects: []
+  primaryInstrumentId: generic_instrument_01
+  controlledChildName: Controlled Turret
+  participantAId: Researcher_A
+  participantBId: Researcher_B
+  autoBootstrapOnSceneLoad: 1
+  createTelemetry: 1
+  verboseLogs: 1
+  enableAutomatedBenchmark: 1
+  autoExportOnComplete: 1
+  useCanonicalPaperPreset: 1
+  benchmarkScenario: 4
+  expectedParticipants: 2
+  repeatCount: 20
+  warmupSeconds: 5
+  holdSeconds: 0.5
+  cooldownSeconds: 0.1
+  stepTimeoutSeconds: 10
+  preQueueNextParticipant: 0
+  manipulateControlledChild: 0
+  manipulationStartDelaySeconds: 0
+  manipulationDurationSeconds: 0.25
+  controlledRotationDelta: {x: 0, y: 0, z: 0}
+  validateFinalRotation: 0
+  finalRotationSettleSeconds: 1
+  rotationToleranceDegrees: 2
+  targetReplicatesPerBackend: 10
+  responsivenessWeight: 0.35
+  runtimeWeight: 0.35
+  coordinationWeight: 0.2
+  reliabilityWeight: 0.1

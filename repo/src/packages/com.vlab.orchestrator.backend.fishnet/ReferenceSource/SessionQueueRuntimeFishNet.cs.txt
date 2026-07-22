@@ -1,0 +1,698 @@
+using System;
+using System.Collections.Generic;
+using System.Linq;
+using FishNet.Connection;
+using FishNet.Object;
+using Thesis.Orchestration.Analytics;
+using Thesis.Orchestration.Core;
+using Thesis.Orchestration.Core.Models;
+using Thesis.Orchestration.EditorTools;
+using Thesis.Orchestration.Runtime;
+using Thesis.Orchestration.SharedSync;
+using Thesis.Orchestration.Telemetry;
+using UnityEngine;
+
+namespace Thesis.Orchestration.Backends.FishNet
+{
+    [RequireComponent(typeof(NetworkObject))]
+    public class SessionQueueRuntimeFishNet : NetworkBehaviour
+    {
+        private const string JoinedEntrySeparator = "||";
+
+        public static SessionQueueRuntimeFishNet Instance { get; private set; }
+
+        [Header("References")]
+        [SerializeField] private SessionOrchestratorFishNet sessionOrchestrator;
+        [SerializeField] private SharedObjectSyncRegistry sharedRegistry;
+
+        [Header("Timeout Settings")]
+        [SerializeField] private float idleTimeoutSeconds = 20f;
+        [SerializeField] private float timeoutCheckIntervalSeconds = 1f;
+
+        [Header("History")]
+        [SerializeField] private int maxHistoryEntries = 20;
+
+        [Header("Debug")]
+        [SerializeField] private bool verboseLogs = true;
+
+        private QueueRuntimeSharedLogic sharedLogic;
+        private bool queueRuntimeActive;
+        private bool sessionStarted;
+        private string currentInstrumentId = string.Empty;
+        private string currentHolderUserId = "None";
+        private readonly List<string> currentQueueSnapshot = new();
+        private readonly List<string> replicatedHistorySnapshot = new();
+        private readonly List<string> replicatedPlayerUserIds = new();
+        private string replicatedMasterUserId = "None";
+
+        private float timeoutTimer;
+        private bool eventsBound;
+        private bool hasInitializedForCurrentSession;
+        private string lastSubmittedLifecycleRowJson = string.Empty;
+
+        private string sharedUserCardStatsJson = string.Empty;
+        private UserCardStatsSnapshot cachedSharedUserCardStats = new UserCardStatsSnapshot();
+
+        public bool HasSharedUserCardStats =>
+            cachedSharedUserCardStats != null &&
+            cachedSharedUserCardStats.users != null &&
+            cachedSharedUserCardStats.users.Count > 0;
+
+        public IReadOnlyList<UserCardStatsEntry> SharedUserCardStats =>
+            cachedSharedUserCardStats != null && cachedSharedUserCardStats.users != null
+                ? cachedSharedUserCardStats.users
+                : Array.Empty<UserCardStatsEntry>();
+
+        public bool SessionStarted => sessionStarted;
+        public bool QueueRuntimeActive => queueRuntimeActive;
+        public string CurrentInstrumentId => currentInstrumentId;
+        public string CurrentHolderUserId => string.IsNullOrWhiteSpace(currentHolderUserId) ? "None" : currentHolderUserId;
+        public List<string> CurrentQueueSnapshot => new(currentQueueSnapshot);
+        public List<string> ReplicatedHistorySnapshot => new(replicatedHistorySnapshot);
+        public List<string> ReplicatedPlayerUserIds => new(replicatedPlayerUserIds);
+        public string ReplicatedMasterUserId => replicatedMasterUserId;
+
+        public event Action OnRuntimeStateUpdated;
+
+        private void Awake()
+        {
+            if (Instance != null && Instance != this)
+            {
+                Destroy(gameObject);
+                return;
+            }
+
+            Instance = this;
+            sharedLogic = new QueueRuntimeSharedLogic(maxHistoryEntries);
+
+            ResolveReferences();
+            ResetRuntimeState(clearSharedUserCardStats: true, notifyListeners: false);
+        }
+
+        private void OnEnable()
+        {
+            ResolveReferences();
+            TryBindEvents();
+        }
+
+        public override void OnStartNetwork()
+        {
+            base.OnStartNetwork();
+
+            ResolveReferences();
+            TryBindEvents();
+        }
+
+        public override void OnStartServer()
+        {
+            base.OnStartServer();
+            timeoutTimer = 0f;
+            hasInitializedForCurrentSession = false;
+        }
+
+        public override void OnStartClient()
+        {
+            base.OnStartClient();
+            ResolveReferences();
+            TryBindEvents();
+            OnRuntimeStateUpdated?.Invoke();
+        }
+
+        public override void OnStopNetwork()
+        {
+            base.OnStopNetwork();
+
+            UnbindEvents();
+            ResetRuntimeState(clearSharedUserCardStats: true, notifyListeners: false);
+
+            if (Instance == this)
+                Instance = null;
+        }
+
+        private void OnDestroy()
+        {
+            UnbindEvents();
+
+            if (Instance == this)
+                Instance = null;
+        }
+
+        private void Update()
+        {
+            ResolveReferences();
+            TryBindEvents();
+            SubmitLocalLifecycleSnapshotIfNeeded();
+
+            if (!IsSpawned || !IsServerInitialized)
+                return;
+
+            if (sessionStarted && !queueRuntimeActive && !hasInitializedForCurrentSession)
+                TryInitializeQueueRuntime();
+
+            if (!queueRuntimeActive || sharedLogic == null || !sharedLogic.IsInitialized)
+                return;
+
+            timeoutTimer += Time.deltaTime;
+            if (timeoutTimer >= timeoutCheckIntervalSeconds)
+            {
+                timeoutTimer = 0f;
+                CheckTimeoutForCurrentInstrument();
+            }
+        }
+
+        public void RequestBeginSessionForLocalPlayer()
+        {
+            if (!IsSpawned)
+            {
+                AddLocalStatus("Cannot begin session yet: SessionQueueRuntimeFishNet is not spawned.");
+                return;
+            }
+
+            string userId = GetLocalUserId();
+            if (IsServerInitialized)
+                HandleBeginSessionRequest(userId);
+            else
+                RequestBeginSessionServerRpc(userId);
+        }
+
+        public void RequestAccessForLocalPlayer()
+        {
+            if (!queueRuntimeActive)
+            {
+                AddLocalStatus("Queue runtime not active yet.");
+                return;
+            }
+
+            string userId = GetLocalUserId();
+            TLog("AccessRequested", userId, currentInstrumentId, "Local player requested access.");
+
+            if (IsServerInitialized)
+                HandleRequestAccess(userId);
+            else
+                RequestAccessServerRpc(userId);
+        }
+
+        public void ReleaseAccessForLocalPlayer()
+        {
+            if (!queueRuntimeActive)
+            {
+                AddLocalStatus("Queue runtime not active yet.");
+                return;
+            }
+
+            string userId = GetLocalUserId();
+            TLog("ReleaseRequested", userId, currentInstrumentId, "Local player requested release.");
+
+            if (IsServerInitialized)
+                HandleReleaseAccess(userId);
+            else
+                ReleaseAccessServerRpc(userId);
+        }
+
+        public bool TryForceReleaseCurrentHolderForFinalization(string reason)
+        {
+            if (!queueRuntimeActive)
+                return false;
+
+            string holderUserId = CurrentHolderUserId;
+            if (string.IsNullOrWhiteSpace(holderUserId) || holderUserId == "None")
+                return false;
+
+            if (IsServerInitialized)
+            {
+                ForceReleaseCurrentHolderOnServer(reason);
+                return true;
+            }
+
+            ForceReleaseCurrentHolderForFinalizationServerRpc(reason ?? "Finalization");
+            return true;
+        }
+
+        public void HeartbeatForLocalPlayer()
+        {
+            if (!queueRuntimeActive)
+                return;
+
+            string userId = GetLocalUserId();
+            if (IsServerInitialized)
+                HandleHeartbeat(userId);
+            else
+                HeartbeatServerRpc(userId);
+        }
+
+        public string GetLocalUserId()
+        {
+            if (sessionOrchestrator != null)
+                return sessionOrchestrator.GetLocalUserId();
+
+            return NetworkManager != null &&
+                   NetworkManager.ClientManager != null &&
+                   NetworkManager.ClientManager.Connection.IsValid
+                ? $"Client_{NetworkManager.ClientManager.Connection.ClientId}"
+                : "UnknownUser";
+        }
+
+        [ServerRpc(RequireOwnership = false)]
+        private void RequestBeginSessionServerRpc(string requestingUserId, NetworkConnection caller = null)
+        {
+            HandleBeginSessionRequest(requestingUserId);
+        }
+
+        [ServerRpc(RequireOwnership = false)]
+        private void RequestAccessServerRpc(string userId, NetworkConnection caller = null)
+        {
+            HandleRequestAccess(userId);
+        }
+
+        [ServerRpc(RequireOwnership = false)]
+        private void ReleaseAccessServerRpc(string userId, NetworkConnection caller = null)
+        {
+            HandleReleaseAccess(userId);
+        }
+
+        [ServerRpc(RequireOwnership = false)]
+        private void ForceReleaseCurrentHolderForFinalizationServerRpc(string reason, NetworkConnection caller = null)
+        {
+            ForceReleaseCurrentHolderOnServer(reason);
+        }
+
+        [ServerRpc(RequireOwnership = false)]
+        private void HeartbeatServerRpc(string userId, NetworkConnection caller = null)
+        {
+            HandleHeartbeat(userId);
+        }
+
+        [ServerRpc(RequireOwnership = false)]
+        private void SubmitLifecycleSnapshotServerRpc(string rowJson, NetworkConnection caller = null)
+        {
+            SessionLifecycleTracker.Instance?.ApplyRowJson(rowJson);
+        }
+
+        [ObserversRpc(BufferLast = true, RunLocally = true)]
+        private void RpcApplyReplicatedState(
+            bool runtimeActive,
+            bool replicatedSessionStarted,
+            string instrumentId,
+            string holderUserId,
+            string joinedQueue,
+            string joinedHistory,
+            string encodedSharedUserCardStats,
+            string joinedPlayerUserIds,
+            string masterUserId)
+        {
+            queueRuntimeActive = runtimeActive;
+            sessionStarted = replicatedSessionStarted;
+            currentInstrumentId = instrumentId ?? string.Empty;
+            currentHolderUserId = string.IsNullOrWhiteSpace(holderUserId) ? "None" : holderUserId;
+
+            currentQueueSnapshot.Clear();
+            currentQueueSnapshot.AddRange(SplitJoinedString(joinedQueue));
+
+            replicatedHistorySnapshot.Clear();
+            replicatedHistorySnapshot.AddRange(SplitJoinedString(joinedHistory));
+
+            replicatedPlayerUserIds.Clear();
+            replicatedPlayerUserIds.AddRange(SplitJoinedString(joinedPlayerUserIds));
+            replicatedMasterUserId = string.IsNullOrWhiteSpace(masterUserId) ? "None" : masterUserId;
+
+            sharedUserCardStatsJson = encodedSharedUserCardStats ?? string.Empty;
+            cachedSharedUserCardStats = UserCardStatsSnapshot.Decode(sharedUserCardStatsJson);
+
+            OnRuntimeStateUpdated?.Invoke();
+        }
+
+        private void SubmitLocalLifecycleSnapshotIfNeeded()
+        {
+            if (!IsSpawned || SessionLifecycleTracker.Instance == null)
+                return;
+
+            string localUserId = GetLocalUserId();
+            if (string.IsNullOrWhiteSpace(localUserId) || localUserId == "UnknownUser")
+                return;
+
+            string rowJson = SessionLifecycleTracker.Instance.BuildBestRowJson(localUserId);
+            if (string.IsNullOrWhiteSpace(rowJson) ||
+                string.Equals(lastSubmittedLifecycleRowJson, rowJson, StringComparison.Ordinal))
+            {
+                return;
+            }
+
+            lastSubmittedLifecycleRowJson = rowJson;
+
+            if (IsServerInitialized)
+            {
+                SessionLifecycleTracker.Instance.ApplyRowJson(rowJson, localUserId);
+                return;
+            }
+
+            SubmitLifecycleSnapshotServerRpc(rowJson);
+        }
+
+        private void HandleBeginSessionRequest(string requestingUserId)
+        {
+            if (!IsServerInitialized || sessionStarted)
+                return;
+
+            sessionStarted = true;
+            hasInitializedForCurrentSession = false;
+            sharedLogic ??= new QueueRuntimeSharedLogic(maxHistoryEntries);
+            sharedLogic.AddHistory("Session started by " + requestingUserId);
+            TLog("FishNetSessionStarted", requestingUserId, currentInstrumentId, "Session start approved on server.");
+
+            TryInitializeQueueRuntime();
+            BroadcastState("Session started.");
+        }
+
+        private void HandleRequestAccess(string userId)
+        {
+            if (!IsServerInitialized || !queueRuntimeActive || sharedLogic == null || !sharedLogic.IsInitialized)
+                return;
+
+            sharedLogic.RecordQueueRequest(
+                userId,
+                currentInstrumentId,
+                CurrentHolderUserId,
+                CurrentQueueSnapshot,
+                "FishNet request received on server.");
+
+            QueueDecision decision = sharedLogic.RequestAccess(userId, currentInstrumentId);
+            HandleDecisionAuthoritatively($"RequestAccess({userId})", decision);
+        }
+
+        private void HandleReleaseAccess(string userId)
+        {
+            if (!IsServerInitialized || !queueRuntimeActive || sharedLogic == null || !sharedLogic.IsInitialized)
+                return;
+
+            QueueDecision decision = sharedLogic.ReleaseAccess(userId, currentInstrumentId);
+            HandleDecisionAuthoritatively($"ReleaseAccess({userId})", decision);
+        }
+
+        private void HandleHeartbeat(string userId)
+        {
+            if (!IsServerInitialized || !queueRuntimeActive || sharedLogic == null || !sharedLogic.IsInitialized)
+                return;
+
+            sharedLogic.RegisterHeartbeat(userId, currentInstrumentId);
+        }
+
+        private void ResolveReferences()
+        {
+            sessionOrchestrator ??= SessionOrchestratorFishNet.Instance;
+            if (sessionOrchestrator == null)
+                sessionOrchestrator = FindFirstObjectByType<SessionOrchestratorFishNet>();
+
+            sharedRegistry ??= SharedObjectSyncRegistry.Instance;
+            if (sharedRegistry == null)
+                sharedRegistry = FindFirstObjectByType<SharedObjectSyncRegistry>();
+
+            sharedLogic ??= new QueueRuntimeSharedLogic(maxHistoryEntries);
+        }
+
+        private void TryBindEvents()
+        {
+            if (eventsBound || sessionOrchestrator == null)
+                return;
+
+            sessionOrchestrator.OnSessionStateChanged += HandleSessionStateChanged;
+            sessionOrchestrator.OnPlayerListUpdated += HandlePlayerListUpdated;
+            eventsBound = true;
+        }
+
+        private void UnbindEvents()
+        {
+            if (!eventsBound || sessionOrchestrator == null)
+                return;
+
+            sessionOrchestrator.OnSessionStateChanged -= HandleSessionStateChanged;
+            sessionOrchestrator.OnPlayerListUpdated -= HandlePlayerListUpdated;
+            eventsBound = false;
+        }
+
+        private void HandleSessionStateChanged(bool started)
+        {
+            if (!started)
+            {
+                ResetRuntimeState(clearSharedUserCardStats: true, notifyListeners: true);
+                return;
+            }
+
+            if (!IsServerInitialized)
+                return;
+
+            if (sessionStarted)
+                return;
+
+            sessionStarted = true;
+            hasInitializedForCurrentSession = false;
+            TryInitializeQueueRuntime();
+            BroadcastState("FishNet session state synced.");
+        }
+
+        private void HandlePlayerListUpdated(List<int> players)
+        {
+            if (!IsServerInitialized)
+                return;
+
+            List<string> activeUserIds = players != null
+                ? players.Select(ConvertClientToUserId).ToList()
+                : new List<string>();
+
+            if (queueRuntimeActive && sharedLogic != null && sharedLogic.IsInitialized)
+            {
+                sharedLogic.SyncUsers(
+                    currentInstrumentId,
+                    activeUserIds,
+                    removedHolderId => sharedLogic.ReleaseAccess(removedHolderId, currentInstrumentId));
+            }
+
+            BroadcastState("FishNet player list synced.");
+        }
+
+        private void TryInitializeQueueRuntime()
+        {
+            if (!IsServerInitialized)
+                return;
+
+            if (sharedRegistry == null)
+            {
+                AddLocalStatus("Cannot initialize FishNet queue runtime: missing shared registry.");
+                return;
+            }
+
+            SharedSyncObjectDefinition instrumentDefinition =
+                sharedRegistry.GetPreferredQueueControlledObject(OrchestrationBackendType.FishNet);
+
+            if (instrumentDefinition == null)
+            {
+                AddLocalStatus("No shared instrument with queue control found for FishNet.");
+                return;
+            }
+
+            currentInstrumentId = instrumentDefinition.ObjectId;
+            currentHolderUserId = "None";
+
+            IEnumerable<string> userIds = GetActiveUserIds();
+            sharedLogic.Initialize(currentInstrumentId, userIds);
+
+            currentQueueSnapshot.Clear();
+            replicatedHistorySnapshot.Clear();
+
+            queueRuntimeActive = true;
+            hasInitializedForCurrentSession = true;
+            timeoutTimer = 0f;
+
+            TLog("QueueRuntimeInitialized", GetLocalUserId(), currentInstrumentId, "FishNet queue runtime initialized on server.");
+            BroadcastState("Queue runtime initialized.");
+        }
+
+        private void CheckTimeoutForCurrentInstrument()
+        {
+            if (!IsServerInitialized || sharedLogic == null || !sharedLogic.IsInitialized)
+                return;
+
+            if (string.IsNullOrWhiteSpace(currentInstrumentId))
+                return;
+
+            QueueDecision decision = sharedLogic.CheckTimeout(currentInstrumentId, TimeSpan.FromSeconds(idleTimeoutSeconds));
+            if (decision != null)
+                HandleDecisionAuthoritatively("TimeoutCheck()", decision);
+        }
+
+        private void BroadcastState(string reason)
+        {
+            if (!IsServerInitialized)
+                return;
+
+            bool logicReady = sharedLogic != null && sharedLogic.IsInitialized;
+            currentHolderUserId = logicReady ? sharedLogic.GetCurrentHolder(currentInstrumentId) : "None";
+
+            string joinedQueue = logicReady ? sharedLogic.BuildJoinedQueue(currentInstrumentId) : string.Empty;
+            string joinedHistory = logicReady ? sharedLogic.BuildJoinedHistory() : string.Empty;
+            string joinedPlayerUserIds = string.Join(JoinedEntrySeparator, GetActiveUserIds());
+            string masterUserId = sessionOrchestrator != null
+                ? sessionOrchestrator.GetMasterUserId()
+                : "None";
+
+            currentQueueSnapshot.Clear();
+            currentQueueSnapshot.AddRange(SplitJoinedString(joinedQueue));
+
+            replicatedHistorySnapshot.Clear();
+            replicatedHistorySnapshot.AddRange(SplitJoinedString(joinedHistory));
+
+            AddLocalStatus($"State updated: {reason}");
+            if (logicReady)
+                PublishSharedUserCardStats();
+
+            RpcApplyReplicatedState(
+                queueRuntimeActive,
+                sessionStarted,
+                currentInstrumentId,
+                currentHolderUserId,
+                joinedQueue,
+                joinedHistory,
+                sharedUserCardStatsJson,
+                joinedPlayerUserIds,
+                masterUserId);
+        }
+
+        private void PublishSharedUserCardStats()
+        {
+            if (!IsServerInitialized)
+                return;
+
+            List<string> activeUserIds = GetActiveUserIds().Distinct().ToList();
+            SessionLifecycleTracker.Instance?.EnsureClientsObserved(activeUserIds);
+
+            string masterUserId = sessionOrchestrator != null ? sessionOrchestrator.GetMasterUserId() : "None";
+            UserCardStatsSnapshot snapshot = Thesis.Orchestration.Telemetry.SharedUserCardStats.BuildSnapshot(
+                activeUserIds,
+                userId => OrchestrationPlayerNameRegistry.ResolveDisplayName(userId, userId),
+                userId => userId == masterUserId,
+                CurrentHolderUserId,
+                CurrentQueueSnapshot,
+                UsageTimingTracker.Instance);
+
+            sharedUserCardStatsJson = UserCardStatsSnapshot.Encode(snapshot);
+            cachedSharedUserCardStats = snapshot;
+        }
+
+        private void ResetRuntimeState(bool clearSharedUserCardStats, bool notifyListeners)
+        {
+            queueRuntimeActive = false;
+            sessionStarted = false;
+            currentInstrumentId = string.Empty;
+            currentHolderUserId = "None";
+            timeoutTimer = 0f;
+            hasInitializedForCurrentSession = false;
+
+            currentQueueSnapshot.Clear();
+            replicatedHistorySnapshot.Clear();
+            replicatedPlayerUserIds.Clear();
+            replicatedMasterUserId = "None";
+
+            sharedLogic = new QueueRuntimeSharedLogic(maxHistoryEntries);
+
+            if (clearSharedUserCardStats)
+            {
+                sharedUserCardStatsJson = string.Empty;
+                cachedSharedUserCardStats = new UserCardStatsSnapshot();
+            }
+
+            if (notifyListeners)
+                OnRuntimeStateUpdated?.Invoke();
+        }
+
+        private void HandleDecisionAuthoritatively(string source, QueueDecision decision)
+        {
+            string holderBefore = currentHolderUserId;
+            string holderAfter = sharedLogic.GetCurrentHolder(currentInstrumentId);
+            List<string> queueSnapshotAfter = SplitJoinedString(sharedLogic.BuildJoinedQueue(currentInstrumentId));
+
+            sharedLogic.RecordDecisionAnalytics(
+                source,
+                decision,
+                currentInstrumentId,
+                holderBefore,
+                holderAfter,
+                queueSnapshotAfter);
+
+            BroadcastState(source);
+        }
+
+        private void ForceReleaseCurrentHolderOnServer(string reason)
+        {
+            if (!IsServerInitialized || !queueRuntimeActive || sharedLogic == null || !sharedLogic.IsInitialized)
+                return;
+
+            string holderUserId = CurrentHolderUserId;
+            if (string.IsNullOrWhiteSpace(holderUserId) || holderUserId == "None")
+                return;
+
+            QueueDecision decision = sharedLogic.ReleaseAccess(holderUserId, currentInstrumentId);
+            HandleDecisionAuthoritatively($"ForceReleaseForFinalization({reason ?? "Finalization"})", decision);
+        }
+
+        private IEnumerable<string> GetActiveUserIds()
+        {
+            HashSet<string> userIds = new HashSet<string>();
+
+            if (sessionOrchestrator != null && sessionOrchestrator.CurrentPlayers != null)
+            {
+                foreach (int clientId in sessionOrchestrator.CurrentPlayers)
+                    userIds.Add(ConvertClientToUserId(clientId));
+            }
+
+            if (NetworkManager != null)
+            {
+                if (NetworkManager.ClientManager != null && NetworkManager.ClientManager.Connection.IsValid)
+                    userIds.Add(ConvertClientToUserId(NetworkManager.ClientManager.Connection.ClientId));
+
+                if (NetworkManager.ClientManager != null && NetworkManager.ClientManager.Clients != null)
+                {
+                    foreach (int clientId in NetworkManager.ClientManager.Clients.Keys)
+                        userIds.Add(ConvertClientToUserId(clientId));
+                }
+
+                if (NetworkManager.ServerManager != null && NetworkManager.ServerManager.Clients != null)
+                {
+                    foreach (int clientId in NetworkManager.ServerManager.Clients.Keys)
+                        userIds.Add(ConvertClientToUserId(clientId));
+                }
+            }
+
+            return userIds.OrderBy(id => id);
+        }
+
+        private static List<string> SplitJoinedString(string joined)
+        {
+            if (string.IsNullOrWhiteSpace(joined))
+                return new List<string>();
+
+            return new List<string>(joined.Split(new[] { JoinedEntrySeparator }, StringSplitOptions.RemoveEmptyEntries));
+        }
+
+        private static string ConvertClientToUserId(int clientId)
+        {
+            return $"Client_{clientId}";
+        }
+
+        private void TLog(string eventType, string userId, string instrumentId, string details)
+        {
+            TelemetryLoggerCore.Instance?.LogEvent(eventType, userId, instrumentId, details);
+        }
+
+        private void AddLocalStatus(string message)
+        {
+            Log(message);
+        }
+
+        private void Log(string message)
+        {
+            if (!verboseLogs)
+                return;
+
+            Debug.Log($"[SessionQueueRuntimeFishNet] {message}", this);
+        }
+    }
+}

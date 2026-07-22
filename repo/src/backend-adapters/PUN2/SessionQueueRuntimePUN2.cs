@@ -1,0 +1,700 @@
+using Photon.Pun;
+using Photon.Realtime;
+using System;
+using System.Collections.Generic;
+using System.Linq;
+using Thesis.Orchestration.Analytics;
+using Thesis.Orchestration.Core;
+using Thesis.Orchestration.Core.Models;
+using Thesis.Orchestration.Telemetry;
+using UnityEngine;
+
+namespace Thesis.Orchestration.Backends.PUN2
+{
+    [RequireComponent(typeof(PhotonView))]
+    public class SessionQueueRuntimePUN2 : MonoBehaviourPunCallbacks
+    {
+        public static SessionQueueRuntimePUN2 Instance { get; private set; }
+
+        [Header("References")]
+        [SerializeField] private SessionOrchestratorPUN2 sessionOrchestrator;
+        [SerializeField] private Thesis.Orchestration.SharedSync.SharedObjectSyncRegistry sharedRegistry;
+
+        [Header("Timeout Settings")]
+        [SerializeField] private float idleTimeoutSeconds = 20f;
+        [SerializeField] private float timeoutCheckIntervalSeconds = 1f;
+
+        [Header("History")]
+        [SerializeField] private int maxHistoryEntries = 20;
+
+        [Header("Debug")]
+        [SerializeField] private bool verboseLogs = true;
+
+        private const string SharedUserCardStatsRoomPropertyKey = "orch_usercard_stats";
+
+        private QueueRuntimeSharedLogic sharedLogic;
+        private PhotonView cachedPhotonView;
+
+        private bool queueRuntimeActive;
+        private string currentInstrumentId = string.Empty;
+        private string currentHolderUserId = "None";
+        private readonly List<string> currentQueueSnapshot = new();
+        private readonly List<string> replicatedHistorySnapshot = new();
+
+        private float timeoutTimer;
+        private bool eventsBound;
+        private bool hasInitializedForCurrentSession;
+        private string lastSubmittedLifecycleRowJson = string.Empty;
+
+        private string sharedUserCardStatsJson = string.Empty;
+        private UserCardStatsSnapshot cachedSharedUserCardStats = new UserCardStatsSnapshot();
+
+        public bool HasSharedUserCardStats =>
+            cachedSharedUserCardStats != null &&
+            cachedSharedUserCardStats.users != null &&
+            cachedSharedUserCardStats.users.Count > 0;
+
+        public IReadOnlyList<UserCardStatsEntry> SharedUserCardStats =>
+            cachedSharedUserCardStats != null && cachedSharedUserCardStats.users != null
+                ? cachedSharedUserCardStats.users
+                : Array.Empty<UserCardStatsEntry>();
+
+        public bool QueueRuntimeActive => queueRuntimeActive;
+        public string CurrentInstrumentId => currentInstrumentId;
+        public string CurrentHolderUserId => string.IsNullOrWhiteSpace(currentHolderUserId) ? "None" : currentHolderUserId;
+        public List<string> CurrentQueueSnapshot => new(currentQueueSnapshot);
+        public List<string> ReplicatedHistorySnapshot => new(replicatedHistorySnapshot);
+
+        public event Action OnRuntimeStateUpdated;
+
+        private void Awake()
+        {
+            if (Instance != null && Instance != this)
+            {
+                Debug.LogWarning("[SessionQueueRuntimePUN2] Duplicate instance found. Destroying duplicate.", this);
+                Destroy(gameObject);
+                return;
+            }
+
+            Instance = this;
+            cachedPhotonView = GetComponent<PhotonView>();
+            sharedLogic = new QueueRuntimeSharedLogic(maxHistoryEntries);
+
+            ResolveReferences();
+            ResetRuntimeState(clearSharedUserCardStats: true, notifyListeners: false);
+        }
+
+        private void OnEnable()
+        {
+            ResolveReferences();
+            TryBindEvents();
+        }
+
+        private void OnDisable()
+        {
+            UnbindEvents();
+        }
+
+        private void OnDestroy()
+        {
+            UnbindEvents();
+            ResetRuntimeState(clearSharedUserCardStats: true, notifyListeners: false);
+
+            if (Instance == this)
+                Instance = null;
+        }
+
+        private void Update()
+        {
+            ResolveReferences();
+            TryBindEvents();
+
+            if (!PhotonNetwork.InRoom)
+                return;
+
+            SubmitLocalLifecycleSnapshotIfNeeded();
+
+            if (PhotonNetwork.IsMasterClient &&
+                !queueRuntimeActive &&
+                !hasInitializedForCurrentSession &&
+                ResolveSessionOrchestrator() != null &&
+                sessionOrchestrator.SessionStarted)
+            {
+                TryInitializeQueueRuntime();
+            }
+
+            if (!PhotonNetwork.IsMasterClient || !queueRuntimeActive || !sharedLogic.IsInitialized)
+                return;
+
+            timeoutTimer += Time.deltaTime;
+            if (timeoutTimer >= timeoutCheckIntervalSeconds)
+            {
+                timeoutTimer = 0f;
+                CheckTimeoutForCurrentInstrument();
+            }
+        }
+
+        private void ResolveReferences()
+        {
+            sessionOrchestrator = ResolveSessionOrchestrator();
+
+            if (sharedRegistry == null)
+                sharedRegistry = Thesis.Orchestration.SharedSync.SharedObjectSyncRegistry.Instance;
+
+            if (cachedPhotonView == null)
+                cachedPhotonView = GetComponent<PhotonView>();
+
+            sharedLogic ??= new QueueRuntimeSharedLogic(maxHistoryEntries);
+        }
+
+        private SessionOrchestratorPUN2 ResolveSessionOrchestrator()
+        {
+            sessionOrchestrator ??= SessionOrchestratorPUN2.Instance;
+            if (sessionOrchestrator == null)
+                sessionOrchestrator = FindFirstObjectByType<SessionOrchestratorPUN2>();
+            return sessionOrchestrator;
+        }
+
+        private void TryBindEvents()
+        {
+            if (eventsBound)
+                return;
+
+            if (ResolveSessionOrchestrator() == null)
+                return;
+
+            sessionOrchestrator.OnSessionStateChanged += HandleSessionStateChanged;
+            sessionOrchestrator.OnPlayerListUpdated += HandlePlayerListUpdated;
+            eventsBound = true;
+
+            Log("Bound to SessionOrchestratorPUN2 events.");
+        }
+
+        private void UnbindEvents()
+        {
+            if (!eventsBound || sessionOrchestrator == null)
+                return;
+
+            sessionOrchestrator.OnSessionStateChanged -= HandleSessionStateChanged;
+            sessionOrchestrator.OnPlayerListUpdated -= HandlePlayerListUpdated;
+            eventsBound = false;
+        }
+
+        private void HandleSessionStateChanged(bool started)
+        {
+            if (!started)
+            {
+                ResetRuntimeState(clearSharedUserCardStats: true, notifyListeners: true);
+                return;
+            }
+
+            if (!PhotonNetwork.IsMasterClient)
+                return;
+
+            if (!queueRuntimeActive)
+                TryInitializeQueueRuntime();
+        }
+
+        private void HandlePlayerListUpdated(List<Player> players)
+        {
+            if (!PhotonNetwork.IsMasterClient || !queueRuntimeActive || !sharedLogic.IsInitialized)
+                return;
+
+            List<string> activeUserIds = players
+                .Where(p => p != null)
+                .Select(ConvertPlayerToUserId)
+                .ToList();
+
+            sharedLogic.SyncUsers(
+                currentInstrumentId,
+                activeUserIds,
+                removedHolderId => sharedLogic.ReleaseAccess(removedHolderId, currentInstrumentId));
+
+            BroadcastState("Photon player list synced.");
+        }
+
+        public void RequestAccessForLocalPlayer()
+        {
+            if (!queueRuntimeActive)
+            {
+                AddLocalStatus("Queue runtime not active yet.");
+                return;
+            }
+
+            if (cachedPhotonView == null || cachedPhotonView.ViewID == 0)
+            {
+                AddLocalStatus("Cannot request access: PhotonView is missing or has invalid ViewID.");
+                return;
+            }
+
+            string userId = GetLocalUserId();
+            TLog("AccessRequested", userId, currentInstrumentId, "Local player requested access.");
+
+            cachedPhotonView.RPC(nameof(RPC_RequestAccess), RpcTarget.MasterClient, userId);
+        }
+
+        public void ReleaseAccessForLocalPlayer()
+        {
+            if (!queueRuntimeActive)
+            {
+                AddLocalStatus("Queue runtime not active yet.");
+                return;
+            }
+
+            if (cachedPhotonView == null || cachedPhotonView.ViewID == 0)
+            {
+                AddLocalStatus("Cannot release access: PhotonView is missing or has invalid ViewID.");
+                return;
+            }
+
+            string userId = GetLocalUserId();
+            TLog("ReleaseRequested", userId, currentInstrumentId, "Local player requested release.");
+            cachedPhotonView.RPC(nameof(RPC_ReleaseAccess), RpcTarget.MasterClient, userId);
+        }
+
+        public bool TryForceReleaseCurrentHolderForFinalization(string reason)
+        {
+            if (!queueRuntimeActive || !sharedLogic.IsInitialized)
+                return false;
+
+            if (string.IsNullOrWhiteSpace(CurrentHolderUserId) || CurrentHolderUserId == "None")
+                return false;
+
+            if (cachedPhotonView == null || cachedPhotonView.ViewID == 0)
+                return false;
+
+            if (PhotonNetwork.IsMasterClient)
+            {
+                ForceReleaseCurrentHolderOnMaster(reason);
+                return true;
+            }
+
+            cachedPhotonView.RPC(nameof(RPC_ForceReleaseCurrentHolderForFinalization), RpcTarget.MasterClient, reason ?? "Finalization");
+            return true;
+        }
+
+        public void HeartbeatForLocalPlayer()
+        {
+            if (!queueRuntimeActive)
+                return;
+
+            if (cachedPhotonView == null || cachedPhotonView.ViewID == 0)
+                return;
+
+            string userId = GetLocalUserId();
+            cachedPhotonView.RPC(nameof(RPC_Heartbeat), RpcTarget.MasterClient, userId);
+        }
+
+        private void TryInitializeQueueRuntime()
+        {
+            if (!PhotonNetwork.IsMasterClient)
+                return;
+
+            if (!PhotonNetwork.InRoom)
+            {
+                AddLocalStatus("Cannot initialize queue runtime: not in room.");
+                return;
+            }
+
+            if (sharedRegistry == null)
+                sharedRegistry = Thesis.Orchestration.SharedSync.SharedObjectSyncRegistry.Instance;
+
+            if (sharedRegistry == null)
+            {
+                AddLocalStatus("Cannot initialize queue runtime: missing shared registry.");
+                return;
+            }
+
+            Thesis.Orchestration.SharedSync.SharedSyncObjectDefinition instrumentDefinition =
+                sharedRegistry.GetPreferredQueueControlledObject(Thesis.Orchestration.EditorTools.OrchestrationBackendType.PUN2);
+
+            if (instrumentDefinition == null)
+            {
+                AddLocalStatus("No shared instrument with queue control found.");
+                return;
+            }
+
+            currentInstrumentId = instrumentDefinition.ObjectId;
+            currentHolderUserId = "None";
+
+            IEnumerable<string> userIds = ResolveSessionOrchestrator() != null
+                ? sessionOrchestrator.CurrentPlayers.OrderBy(p => p.ActorNumber).Select(ConvertPlayerToUserId)
+                : Array.Empty<string>();
+
+            sharedLogic.Initialize(currentInstrumentId, userIds);
+
+            currentQueueSnapshot.Clear();
+            replicatedHistorySnapshot.Clear();
+
+            queueRuntimeActive = true;
+            hasInitializedForCurrentSession = true;
+            timeoutTimer = 0f;
+
+            TLog("QueueRuntimeInitialized", GetLocalUserId(), currentInstrumentId, "PUN2 queue runtime initialized on master.");
+            BroadcastState("Queue runtime initialized.");
+        }
+
+        private void CheckTimeoutForCurrentInstrument()
+        {
+            if (!PhotonNetwork.IsMasterClient || !sharedLogic.IsInitialized)
+                return;
+
+            if (string.IsNullOrWhiteSpace(currentInstrumentId))
+                return;
+
+            QueueDecision decision = sharedLogic.CheckTimeout(currentInstrumentId, TimeSpan.FromSeconds(idleTimeoutSeconds));
+            if (decision != null)
+                HandleDecisionAuthoritatively("TimeoutCheck()", decision);
+        }
+
+        private void BroadcastState(string reason)
+        {
+            if (!PhotonNetwork.IsMasterClient || !sharedLogic.IsInitialized)
+                return;
+
+            currentHolderUserId = sharedLogic.GetCurrentHolder(currentInstrumentId);
+
+            string joinedQueue = sharedLogic.BuildJoinedQueue(currentInstrumentId);
+            string joinedHistory = sharedLogic.BuildJoinedHistory();
+
+            currentQueueSnapshot.Clear();
+            currentQueueSnapshot.AddRange(SplitJoinedString(joinedQueue));
+
+            replicatedHistorySnapshot.Clear();
+            replicatedHistorySnapshot.AddRange(SplitJoinedString(joinedHistory));
+
+            AddLocalStatus($"State updated: {reason}");
+
+            PublishSharedUserCardStats();
+
+            cachedPhotonView.RPC(
+                nameof(RPC_ApplyReplicatedState),
+                RpcTarget.AllBuffered,
+                queueRuntimeActive,
+                currentInstrumentId,
+                currentHolderUserId,
+                joinedQueue,
+                joinedHistory);
+
+            OnRuntimeStateUpdated?.Invoke();
+        }
+
+        private void PublishSharedUserCardStats()
+        {
+            if (!PhotonNetwork.IsMasterClient)
+                return;
+
+            UsageTimingTracker tracker = UsageTimingTracker.Instance;
+
+            List<string> activeUserIds =
+                sessionOrchestrator != null && sessionOrchestrator.CurrentPlayers != null
+                    ? sessionOrchestrator.CurrentPlayers
+                        .Where(p => p != null)
+                        .Select(p => $"Actor_{p.ActorNumber}")
+                        .ToList()
+                    : new List<string>();
+
+            SessionLifecycleTracker.Instance?.EnsureClientsObserved(activeUserIds);
+
+            UserCardStatsSnapshot snapshot = Thesis.Orchestration.Telemetry.SharedUserCardStats.BuildSnapshot(
+                activeUserIds,
+                userId =>
+                {
+                    Player player = sessionOrchestrator != null && sessionOrchestrator.CurrentPlayers != null
+                        ? sessionOrchestrator.CurrentPlayers.FirstOrDefault(p => p != null && $"Actor_{p.ActorNumber}" == userId)
+                        : null;
+
+                    return player != null && !string.IsNullOrWhiteSpace(player.NickName)
+                        ? player.NickName
+                        : userId;
+                },
+                userId =>
+                {
+                    Player player = sessionOrchestrator != null && sessionOrchestrator.CurrentPlayers != null
+                        ? sessionOrchestrator.CurrentPlayers.FirstOrDefault(p => p != null && $"Actor_{p.ActorNumber}" == userId)
+                        : null;
+
+                    return player != null && player.IsMasterClient;
+                },
+                currentHolderUserId,
+                currentQueueSnapshot,
+                tracker);
+
+            sharedUserCardStatsJson = UserCardStatsSnapshot.Encode(snapshot);
+            cachedSharedUserCardStats = snapshot;
+
+            if (PhotonNetwork.CurrentRoom != null)
+            {
+                ExitGames.Client.Photon.Hashtable props = new ExitGames.Client.Photon.Hashtable
+                {
+                    { SharedUserCardStatsRoomPropertyKey, sharedUserCardStatsJson }
+                };
+
+                PhotonNetwork.CurrentRoom.SetCustomProperties(props);
+            }
+        }
+
+        private void PullSharedUserCardStats()
+        {
+            if (PhotonNetwork.CurrentRoom == null)
+                return;
+
+            if (PhotonNetwork.CurrentRoom.CustomProperties.TryGetValue(SharedUserCardStatsRoomPropertyKey, out object value))
+            {
+                sharedUserCardStatsJson = value as string ?? string.Empty;
+                cachedSharedUserCardStats = UserCardStatsSnapshot.Decode(sharedUserCardStatsJson);
+            }
+        }
+
+        private void ResetRuntimeState(bool clearSharedUserCardStats, bool notifyListeners)
+        {
+            queueRuntimeActive = false;
+            currentInstrumentId = string.Empty;
+            currentHolderUserId = "None";
+            timeoutTimer = 0f;
+            hasInitializedForCurrentSession = false;
+
+            currentQueueSnapshot.Clear();
+            replicatedHistorySnapshot.Clear();
+
+            sharedLogic = new QueueRuntimeSharedLogic(maxHistoryEntries);
+
+            if (clearSharedUserCardStats)
+            {
+                sharedUserCardStatsJson = string.Empty;
+                cachedSharedUserCardStats = new UserCardStatsSnapshot();
+            }
+
+            if (notifyListeners)
+                OnRuntimeStateUpdated?.Invoke();
+        }
+
+        [PunRPC]
+        private void RPC_RequestAccess(string userId)
+        {
+            if (!PhotonNetwork.IsMasterClient || !queueRuntimeActive || !sharedLogic.IsInitialized)
+                return;
+
+            // Record the request on the authoritative side so wait times, fairness, and counts are consistent.
+            TLog("AccessRequested", userId, currentInstrumentId, "PUN2 request received on master.");
+            sharedLogic.RecordQueueRequest(
+                userId,
+                currentInstrumentId,
+                currentHolderUserId,
+                currentQueueSnapshot,
+                "PUN2 request received on master.");
+
+            QueueDecision decision = sharedLogic.RequestAccess(userId, currentInstrumentId);
+            HandleDecisionAuthoritatively($"RequestAccess({userId})", decision);
+        }
+
+        [PunRPC]
+        private void RPC_ReleaseAccess(string userId)
+        {
+            if (!PhotonNetwork.IsMasterClient || !queueRuntimeActive || !sharedLogic.IsInitialized)
+                return;
+
+            QueueDecision decision = sharedLogic.ReleaseAccess(userId, currentInstrumentId);
+            HandleDecisionAuthoritatively($"ReleaseAccess({userId})", decision);
+        }
+
+        [PunRPC]
+        private void RPC_ForceReleaseCurrentHolderForFinalization(string reason)
+        {
+            if (!PhotonNetwork.IsMasterClient || !queueRuntimeActive || !sharedLogic.IsInitialized)
+                return;
+
+            ForceReleaseCurrentHolderOnMaster(reason);
+        }
+
+        [PunRPC]
+        private void RPC_Heartbeat(string userId)
+        {
+            if (!PhotonNetwork.IsMasterClient || !queueRuntimeActive || !sharedLogic.IsInitialized)
+                return;
+
+            sharedLogic.RegisterHeartbeat(userId, currentInstrumentId);
+        }
+
+        [PunRPC]
+        private void RPC_SubmitLifecycleSnapshot(string rowJson)
+        {
+            if (!PhotonNetwork.IsMasterClient)
+                return;
+
+            SessionLifecycleTracker.Instance?.ApplyRowJson(rowJson);
+        }
+
+        [PunRPC]
+        private void RPC_SubmitAuthorityTransferSnapshot(string rowJson)
+        {
+            if (!PhotonNetwork.IsMasterClient)
+                return;
+
+            AuthorityTransferRecorder.Instance?.ApplyCompletedRowJson(rowJson);
+        }
+
+        [PunRPC]
+        private void RPC_ApplyReplicatedState(
+            bool runtimeActive,
+            string instrumentId,
+            string holderUserId,
+            string joinedQueue,
+            string joinedHistory)
+        {
+            queueRuntimeActive = runtimeActive;
+            currentInstrumentId = instrumentId;
+            currentHolderUserId = string.IsNullOrWhiteSpace(holderUserId) ? "None" : holderUserId;
+
+            currentQueueSnapshot.Clear();
+            currentQueueSnapshot.AddRange(SplitJoinedString(joinedQueue));
+
+            replicatedHistorySnapshot.Clear();
+            replicatedHistorySnapshot.AddRange(SplitJoinedString(joinedHistory));
+
+            PullSharedUserCardStats();
+            OnRuntimeStateUpdated?.Invoke();
+        }
+
+        private void HandleDecisionAuthoritatively(string source, QueueDecision decision)
+        {
+            string holderBefore = currentHolderUserId;
+
+            // Pull post-decision state directly from the shared core so analytics/timing are updated
+            // before we publish UI snapshots or replicate state.
+            string holderAfter = sharedLogic.GetCurrentHolder(currentInstrumentId);
+            List<string> queueSnapshotAfter = SplitJoinedString(sharedLogic.BuildJoinedQueue(currentInstrumentId));
+
+            sharedLogic.RecordDecisionAnalytics(
+                source,
+                decision,
+                currentInstrumentId,
+                holderBefore,
+                holderAfter,
+                queueSnapshotAfter);
+
+            BroadcastState(source);
+        }
+
+        private void ForceReleaseCurrentHolderOnMaster(string reason)
+        {
+            string holderUserId = CurrentHolderUserId;
+            if (string.IsNullOrWhiteSpace(holderUserId) || holderUserId == "None")
+                return;
+
+            QueueDecision decision = sharedLogic.ReleaseAccess(holderUserId, currentInstrumentId);
+            HandleDecisionAuthoritatively($"ForceReleaseForFinalization({reason ?? "Finalization"})", decision);
+        }
+
+        public override void OnJoinedRoom()
+        {
+            base.OnJoinedRoom();
+
+            ResetRuntimeState(clearSharedUserCardStats: true, notifyListeners: false);
+            PullSharedUserCardStats();
+            OnRuntimeStateUpdated?.Invoke();
+        }
+
+        public override void OnLeftRoom()
+        {
+            base.OnLeftRoom();
+            ResetRuntimeState(clearSharedUserCardStats: true, notifyListeners: true);
+        }
+
+        public override void OnDisconnected(DisconnectCause cause)
+        {
+            base.OnDisconnected(cause);
+            ResetRuntimeState(clearSharedUserCardStats: true, notifyListeners: true);
+        }
+
+        public override void OnRoomPropertiesUpdate(ExitGames.Client.Photon.Hashtable propertiesThatChanged)
+        {
+            base.OnRoomPropertiesUpdate(propertiesThatChanged);
+
+            if (propertiesThatChanged.ContainsKey(SharedUserCardStatsRoomPropertyKey))
+            {
+                PullSharedUserCardStats();
+                OnRuntimeStateUpdated?.Invoke();
+            }
+        }
+
+        private void SubmitLocalLifecycleSnapshotIfNeeded()
+        {
+            if (!PhotonNetwork.InRoom || SessionLifecycleTracker.Instance == null)
+                return;
+
+            string localUserId = GetLocalUserId();
+            if (string.IsNullOrWhiteSpace(localUserId) || localUserId == "UnknownUser")
+                return;
+
+            string rowJson = SessionLifecycleTracker.Instance.BuildBestRowJson(localUserId);
+            if (string.IsNullOrWhiteSpace(rowJson) ||
+                string.Equals(lastSubmittedLifecycleRowJson, rowJson, StringComparison.Ordinal))
+            {
+                return;
+            }
+
+            lastSubmittedLifecycleRowJson = rowJson;
+
+            if (PhotonNetwork.IsMasterClient)
+            {
+                SessionLifecycleTracker.Instance.ApplyRowJson(rowJson, localUserId);
+                return;
+            }
+
+            if (cachedPhotonView == null || cachedPhotonView.ViewID == 0)
+                return;
+
+            cachedPhotonView.RPC(nameof(RPC_SubmitLifecycleSnapshot), RpcTarget.MasterClient, rowJson);
+        }
+
+        public void SubmitAuthorityTransferSnapshot(string rowJson)
+        {
+            if (!PhotonNetwork.InRoom || PhotonNetwork.IsMasterClient || string.IsNullOrWhiteSpace(rowJson))
+                return;
+
+            if (cachedPhotonView == null || cachedPhotonView.ViewID == 0)
+                return;
+
+            cachedPhotonView.RPC(nameof(RPC_SubmitAuthorityTransferSnapshot), RpcTarget.MasterClient, rowJson);
+        }
+
+        private string ConvertPlayerToUserId(Player player)
+        {
+            return player != null ? $"Actor_{player.ActorNumber}" : "UnknownUser";
+        }
+
+        private string GetLocalUserId()
+        {
+            return PhotonNetwork.LocalPlayer != null
+                ? $"Actor_{PhotonNetwork.LocalPlayer.ActorNumber}"
+                : "UnknownUser";
+        }
+
+        private List<string> SplitJoinedString(string joined)
+        {
+            if (string.IsNullOrWhiteSpace(joined))
+                return new List<string>();
+
+            return new List<string>(joined.Split(new[] { "||" }, StringSplitOptions.RemoveEmptyEntries));
+        }
+
+        private void TLog(string eventType, string userId, string instrumentId, string details)
+        {
+            TelemetryLoggerCore.Instance?.LogEvent(eventType, userId, instrumentId, details);
+        }
+
+        private void AddLocalStatus(string message)
+        {
+            Log(message);
+        }
+
+        private void Log(string message)
+        {
+            if (!verboseLogs)
+                return;
+
+            Debug.Log($"[SessionQueueRuntimePUN2] {message}", this);
+        }
+    }
+}

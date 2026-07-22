@@ -1,0 +1,322 @@
+using Fusion;
+using System.Collections.Generic;
+using System.Linq;
+using Thesis.Orchestration.SharedSync;
+using Thesis.Orchestration.Telemetry;
+using UnityEngine;
+
+namespace Thesis.Orchestration.Backends.Fusion
+{
+    [DisallowMultipleComponent]
+    public class MicroscopeAccessControllerFusion : BaseMicroscopeAccessController
+    {
+        [Header("References")]
+        [SerializeField] private SessionQueueRuntimeFusion queueRuntime;
+        [SerializeField] private NetworkObject rootNetworkObject;
+
+        [Header("Authority")]
+        [SerializeField] private bool requestAuthorityForControlledChildren = false;
+        [SerializeField] private float authorityRequestCooldownSeconds = 0.35f;
+
+        private readonly Dictionary<string, float> lastAuthorityRequestTimeByObjectId = new();
+        private readonly Dictionary<int, NetworkObject> pendingAuthorityObjectsByInstanceId = new();
+        private bool logicalAuthorityTransferPending;
+
+        private void Awake()
+        {
+            BaseAwake();
+
+            if (queueRuntime == null)
+                queueRuntime = SessionQueueRuntimeFusion.Instance;
+
+            if (rootNetworkObject == null)
+                rootNetworkObject = GetComponent<NetworkObject>();
+        }
+
+        private void OnEnable()
+        {
+            ResolveQueueRuntime();
+
+            if (queueRuntime != null)
+                queueRuntime.OnRuntimeStateUpdated += RefreshAccessState;
+        }
+
+        private void OnDisable()
+        {
+            if (queueRuntime != null)
+                queueRuntime.OnRuntimeStateUpdated -= RefreshAccessState;
+
+            lastAuthorityRequestTimeByObjectId.Clear();
+            pendingAuthorityObjectsByInstanceId.Clear();
+            logicalAuthorityTransferPending = false;
+        }
+
+        private void Start()
+        {
+            BaseStart();
+        }
+
+        private void Update()
+        {
+            BaseUpdate();
+            RefreshPendingAuthorityTransfers();
+        }
+
+        private string GetTrackedObjectId()
+        {
+            if (sharedDefinition != null && !string.IsNullOrWhiteSpace(sharedDefinition.ObjectId))
+                return sharedDefinition.ObjectId;
+
+            return gameObject.name;
+        }
+
+        private string GetCurrentOwnerId()
+        {
+            return GetCurrentOwnerId(rootNetworkObject);
+        }
+
+        private string GetCurrentOwnerId(NetworkObject obj)
+        {
+            if (obj == null || !obj.IsValid)
+                return "None";
+
+            if (obj.StateAuthority == PlayerRef.None)
+                return "None";
+
+            return $"Player_{obj.StateAuthority.RawEncoded}";
+        }
+
+        private void ResolveQueueRuntime()
+        {
+            if (queueRuntime == null)
+                queueRuntime = SessionQueueRuntimeFusion.Instance;
+            if (queueRuntime == null)
+                queueRuntime = FindFirstObjectByType<SessionQueueRuntimeFusion>();
+        }
+
+        protected override bool CanEvaluateAccessState()
+        {
+            ResolveQueueRuntime();
+            return queueRuntime != null && sharedDefinition != null;
+        }
+
+        protected override bool IsQueueRuntimeActive()
+        {
+            return queueRuntime != null && queueRuntime.QueueRuntimeActive;
+        }
+
+        protected override string GetCurrentInstrumentId()
+        {
+            return queueRuntime != null ? queueRuntime.CurrentInstrumentId : string.Empty;
+        }
+
+        protected override string GetCurrentHolderUserId()
+        {
+            return queueRuntime != null ? queueRuntime.CurrentHolderUserId : "None";
+        }
+
+        public string GetCurrentHolderUserIdForSync()
+        {
+            return GetCurrentHolderUserId();
+        }
+
+        protected override string GetLocalUserId()
+        {
+            if (queueRuntime != null && queueRuntime.Runner != null && queueRuntime.Runner.IsRunning)
+                return $"Player_{queueRuntime.Runner.LocalPlayer.RawEncoded}";
+
+            SessionOrchestratorFusion orchestrator = SessionOrchestratorFusion.Instance;
+            if (orchestrator != null)
+            {
+                string userId = orchestrator.GetLocalUserId();
+                if (!string.IsNullOrWhiteSpace(userId) && userId != "UnknownUser")
+                    return userId;
+            }
+
+            return "UnknownUser";
+        }
+
+        protected override void OnLocalAccessChanged(bool hasAccess)
+        {
+            if (!hasAccess)
+                return;
+
+            RequestAuthorityIfNeeded();
+        }
+
+        protected override void RequestAuthorityIfNeeded()
+        {
+            bool requestedAny = false;
+            string ownerBefore = "None";
+
+            TryRequestAuthorityForAnalytics(rootNetworkObject, "root", ref requestedAny, ref ownerBefore);
+
+            foreach (var child in GetControlledChildObjects())
+            {
+                if (child == null)
+                    continue;
+
+                NetworkObject childNetworkObject = child.GetComponent<NetworkObject>();
+                if (!ShouldRequestAuthorityForChild(child, childNetworkObject))
+                    continue;
+
+                TryRequestAuthorityForAnalytics(childNetworkObject, child.name, ref requestedAny, ref ownerBefore);
+            }
+
+            if (requestedAny)
+                BeginLogicalAuthorityTransfer(ownerBefore);
+        }
+
+        private bool ShouldRequestAuthorityForChild(GameObject childObject, NetworkObject childNetworkObject)
+        {
+            if (childNetworkObject == null || !childNetworkObject.IsValid)
+                return false;
+
+            if (childNetworkObject == rootNetworkObject)
+                return false;
+
+            if (rootNetworkObject == null)
+                return true;
+
+            bool isInteractiveChild = childObject != null && childObject.GetComponent("MouseUI") != null;
+            if (!requestAuthorityForControlledChildren && !isInteractiveChild)
+                return false;
+
+            bool isNestedUnderRoot = childNetworkObject.transform.IsChildOf(rootNetworkObject.transform);
+            if (!isNestedUnderRoot)
+                return true;
+
+            // Interactive microscope children may intentionally use a plain child NetworkObject
+            // without additional Fusion NetworkBehaviours. Those still need state authority so
+            // the holder can manipulate them and broadcast their transform via the root sync.
+            if (isInteractiveChild)
+                return true;
+
+            // For non-interactive nested children, stay conservative unless they explicitly carry
+            // Fusion network behaviour and the scene author opted into requesting child authority.
+            return requestAuthorityForControlledChildren &&
+                   childNetworkObject.GetComponents<NetworkBehaviour>().Length > 0;
+        }
+
+        private void TryRequestAuthorityForAnalytics(NetworkObject networkObject, string label, ref bool requestedAny, ref string ownerBefore)
+        {
+            if (networkObject == null || !networkObject.IsValid)
+                return;
+
+            string candidateOwnerBefore = GetCurrentOwnerId(networkObject);
+            if (!RequestAuthorityForObject(networkObject, label))
+                return;
+
+            if (!requestedAny)
+                ownerBefore = candidateOwnerBefore;
+
+            requestedAny = true;
+        }
+
+        private bool RequestAuthorityForObject(NetworkObject networkObject, string label)
+        {
+            if (networkObject == null || !networkObject.IsValid)
+                return false;
+
+            string authorityRequestKey = BuildAuthorityRequestKey(networkObject, label);
+
+            if (networkObject.HasStateAuthority)
+                return false;
+
+            if (lastAuthorityRequestTimeByObjectId.TryGetValue(authorityRequestKey, out float lastRequestTime) &&
+                Time.time - lastRequestTime < authorityRequestCooldownSeconds)
+            {
+                return false;
+            }
+
+            lastAuthorityRequestTimeByObjectId[authorityRequestKey] = Time.time;
+            pendingAuthorityObjectsByInstanceId[networkObject.GetInstanceID()] = networkObject;
+
+            networkObject.RequestStateAuthority();
+            Log($"Requested state authority for {label}.");
+            return true;
+        }
+
+        private void RefreshPendingAuthorityTransfers()
+        {
+            if (pendingAuthorityObjectsByInstanceId.Count == 0)
+                return;
+
+            List<int> completedAuthorityIds = null;
+            foreach (KeyValuePair<int, NetworkObject> pending in pendingAuthorityObjectsByInstanceId)
+            {
+                NetworkObject networkObject = pending.Value;
+                if (networkObject == null || !networkObject.IsValid)
+                {
+                    completedAuthorityIds ??= new List<int>();
+                    completedAuthorityIds.Add(pending.Key);
+                    continue;
+                }
+
+                if (!networkObject.HasStateAuthority)
+                    continue;
+
+                CompleteLogicalAuthorityTransfer(
+                    true,
+                    GetLocalUserId(),
+                    "Fusion logical microscope authority transfer completed when local state authority became active.");
+
+                completedAuthorityIds = pendingAuthorityObjectsByInstanceId.Keys.ToList();
+                break;
+            }
+
+            if (completedAuthorityIds != null)
+            {
+                foreach (int authorityObjectId in completedAuthorityIds)
+                    pendingAuthorityObjectsByInstanceId.Remove(authorityObjectId);
+            }
+
+            if (!logicalAuthorityTransferPending || pendingAuthorityObjectsByInstanceId.Count > 0)
+                return;
+
+            CompleteLogicalAuthorityTransfer(
+                false,
+                GetCurrentOwnerId(),
+                "Fusion logical microscope authority transfer ended without any pending authority object succeeding.");
+        }
+
+        private void BeginLogicalAuthorityTransfer(string ownerBefore)
+        {
+            if (logicalAuthorityTransferPending)
+                return;
+
+            logicalAuthorityTransferPending = true;
+
+            AuthorityTransferRecorder.Instance?.RecordTransferRequested(
+                GetTrackedObjectId(),
+                GetLocalUserId(),
+                ownerBefore,
+                "Fusion logical microscope authority request initiated.");
+        }
+
+        private void CompleteLogicalAuthorityTransfer(bool success, string ownerAfter, string details)
+        {
+            if (!logicalAuthorityTransferPending)
+                return;
+
+            logicalAuthorityTransferPending = false;
+            pendingAuthorityObjectsByInstanceId.Clear();
+
+            AuthorityTransferRecorder.Instance?.RecordTransferCompleted(
+                GetTrackedObjectId(),
+                GetLocalUserId(),
+                ownerAfter,
+                success,
+                details);
+        }
+
+        private string BuildAuthorityRequestKey(NetworkObject networkObject, string label)
+        {
+            string objectName = networkObject != null && networkObject.gameObject != null
+                ? networkObject.gameObject.name
+                : "NetworkObject";
+
+            return $"{GetTrackedObjectId()}/{label}/{objectName}";
+        }
+    }
+}

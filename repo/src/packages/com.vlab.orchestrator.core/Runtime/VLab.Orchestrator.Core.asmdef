@@ -1,0 +1,14 @@
+{
+  "name": "VLab.Orchestrator.Core",
+  "rootNamespace": "VLabOrchestrator",
+  "references": [],
+  "includePlatforms": [],
+  "excludePlatforms": [],
+  "allowUnsafeCode": false,
+  "overrideReferences": false,
+  "precompiledReferences": [],
+  "autoReferenced": true,
+  "defineConstraints": [],
+  "versionDefines": [],
+  "noEngineReferences": false
+}
