@@ -129,7 +129,7 @@ namespace Thesis.Orchestration.EditorTools
         public bool automatedScenarioAutoBeginSession = true;
         public bool automatedScenarioAutoExportOnComplete = false;
         public string automatedScenarioIdOverride = "";
-        public string automatedScenarioProtocolVersion = "1.4";
+        public string automatedScenarioProtocolVersion = "1.5";
         [Min(2)] public int automatedScenarioExpectedParticipants = 2;
         [Min(1)] public int automatedScenarioRepeatCount = 3;
         [Min(0f)] public float automatedScenarioWarmupSeconds = 5f;

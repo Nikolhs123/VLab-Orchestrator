@@ -34,10 +34,14 @@ approximately 17 ms in S2 and S5. Raw rows show alternating near-zero and
 hold-duration-scale observations. The authority event definition must be
 reviewed before using these values for cross-backend ranking.
 
+These anomalies were investigated in the protocol 1.5 validation addendum under
+`data/validation/protocol-1.5-anomaly-validation-2026-07-23`. The Netcode values
+were traced to abandoned pending timestamps and corrected. Mirror S1 converged
+on rerun, while the PUN2 S3 threshold miss reproduced.
+
 ## Interpretation
 
 This is a candidate functional dataset, not the final statistical dataset. It
 contains one independent run per backend-scenario cell. The preregistered target
 is at least 10 independent repetitions per cell, subject to pilot variance and
 power analysis. Do not pool this batch with Editor-to-player pilot exports.
-

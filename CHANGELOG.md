@@ -1,5 +1,14 @@
 # Changelog
 
+## Protocol 1.5 - Authority timing validation
+
+- Cancelled abandoned Unity Netcode authority-transfer measurements when local
+  logical access is revoked before physical ownership completes.
+- Prevented later ownership completions from inheriting stale request timestamps
+  from a previous benchmark cycle.
+- Versioned corrected exports as protocol 1.5 so they cannot be silently pooled
+  with the protocol 1.4 candidate matrix.
+
 ## Unreleased - 2026-07-12
 
 - Versioned the final validity correction as benchmark protocol `1.4`: closed-loop

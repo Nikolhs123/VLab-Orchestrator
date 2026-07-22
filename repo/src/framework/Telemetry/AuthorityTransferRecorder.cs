@@ -95,6 +95,15 @@ namespace Thesis.Orchestration.Telemetry
             Log($"Transfer requested | object={objectId} | logicalHolder={logicalHolder} | ownerBefore={ownerBefore}");
         }
 
+        public void CancelPendingTransfer(string objectId, string logicalHolder, string details = "")
+        {
+            string key = BuildKey(objectId, logicalHolder);
+            if (!pendingTransfers.Remove(key))
+                return;
+
+            Log($"Pending transfer cancelled | object={objectId} | logicalHolder={logicalHolder} | details={details}");
+        }
+
         public void RecordTransferCompleted(string objectId, string logicalHolder, string ownerAfter, bool success, string details = "")
         {
             string key = BuildKey(objectId, logicalHolder);

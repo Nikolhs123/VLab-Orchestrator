@@ -49,7 +49,7 @@ namespace Thesis.Orchestration.Backends.Netcode
             if (queueRuntime != null)
                 queueRuntime.OnRuntimeStateUpdated -= RefreshAccessState;
 
-            logicalAuthorityTransferPending = false;
+            CancelPendingLogicalAuthorityTransfer("Controller disabled before ownership completion.");
         }
 
         private void Start()
@@ -137,6 +137,8 @@ namespace Thesis.Orchestration.Backends.Netcode
                 return;
             }
 
+            CancelPendingLogicalAuthorityTransfer("Local logical access was revoked before ownership completion.");
+
             if (!releaseOwnershipWhenAccessRevoked || ownershipRelay == null || rootNetworkObject == null || !rootNetworkObject.IsSpawned)
                 return;
 
@@ -173,7 +175,7 @@ namespace Thesis.Orchestration.Backends.Netcode
             if (rootNetworkObject.OwnerClientId != manager.LocalClientId)
             {
                 if (!HasLocalAccess)
-                    logicalAuthorityTransferPending = false;
+                    CancelPendingLogicalAuthorityTransfer("Local logical access no longer matches the pending ownership request.");
 
                 return;
             }
@@ -193,6 +195,18 @@ namespace Thesis.Orchestration.Backends.Netcode
                 string rowJson = recorder.BuildMostRecentCompletedRowJson(GetTrackedObjectId(), GetLocalUserId());
                 queueRuntime?.SubmitAuthorityTransferSnapshot(rowJson);
             }
+        }
+
+        private void CancelPendingLogicalAuthorityTransfer(string details)
+        {
+            if (!logicalAuthorityTransferPending)
+                return;
+
+            logicalAuthorityTransferPending = false;
+            AuthorityTransferRecorder.Instance?.CancelPendingTransfer(
+                GetTrackedObjectId(),
+                GetLocalUserId(),
+                details);
         }
 
         private void ResolveQueueRuntime()

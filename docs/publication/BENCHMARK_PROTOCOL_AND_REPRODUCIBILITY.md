@@ -2,7 +2,7 @@
 
 ## Implemented Protocol
 
-The current benchmark protocol version is 1.4. The same scenario runner,
+The current benchmark protocol version is 1.5. The same scenario runner,
 assertion model, and export pipeline operate above all five networking backends.
 
 | ID | Purpose | Mode | Participants | Cycles | Hold | Prequeue | Controlled child rotation |
@@ -17,7 +17,7 @@ All scenarios use a five-second warmup. Their cooldown, timeout, manipulation,
 settling, and tolerance values are defined in
 `Editor/Setup/BenchmarkScenarioPresetCatalog.cs`.
 
-Protocol 1.4 requires at least `completed cycles - 1` successful physical backend
+Protocol 1.5 requires at least `completed cycles - 1` successful physical backend
 authority handoffs in a closed-loop run. These are the guaranteed inter-cycle
 handoffs. Per-phase assertions independently verify every logical holder
 transition, because SDKs differ in whether an initial assignment or a return to
