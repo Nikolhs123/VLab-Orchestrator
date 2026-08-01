@@ -22,7 +22,7 @@ VLab Orchestrator is a Unity framework intended to reduce direct coupling betwee
 
 | Item | Description |
 |---|---|
-| C1 Current code version | 0.3.0 release candidate; final archival tag pending |
+| C1 Current code version | 1.0.0; archival DOI pending |
 | C2 Permanent repository link | https://github.com/Nikolhs123/VLab-Orchestrator |
 | C3 Code license | MIT License |
 | C4 Version-control system | Git |

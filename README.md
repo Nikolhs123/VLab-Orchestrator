@@ -1,5 +1,10 @@
 # VLab Orchestrator
 
+[![MIT License](https://img.shields.io/badge/license-MIT-0f766e.svg)](LICENSE.txt)
+[![Illustrated Guide](https://img.shields.io/badge/guide-illustrated-e5b64f.svg)](docs/installation/ILLUSTRATED_GUIDE.md)
+[![Release](https://img.shields.io/badge/release-v1.0.0-2563eb.svg)](https://github.com/Nikolhs123/VLab-Orchestrator/releases/tag/v1.0.0)
+[![Unity](https://img.shields.io/badge/Unity-6000.3.11f1-111827.svg)](repo/src/showcase/UnityProject/ProjectSettings/ProjectVersion.txt)
+
 VLab Orchestrator is a Unity research-software framework for applying one
 session, shared-access, authority-transfer, synchronization, telemetry, and
 evaluation model across heterogeneous multiplayer networking backends.

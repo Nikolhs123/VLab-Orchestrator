@@ -1,5 +1,17 @@
 # Changelog
 
+## 1.0.0 - 2026-08-01
+
+- Published the rights-cleared SoftwareX research-software artifact.
+- Added the SDK-independent showcase, five audited backend integrations, and
+  deterministic validity-aware benchmark workflow.
+- Added safe backend SDK installation, uninstall, compatibility repair, and
+  generated-runtime activation for Unity `6000.3.11f1`.
+- Added retained Windows-to-Windows evaluation data, anomaly-validation runs,
+  package/provenance documentation, and an illustrated evaluator guide.
+- Excluded vendor SDK payloads, Photon credentials, generated runtime assets,
+  private V-Lab media, and internal manuscript-review artifacts.
+
 ## Protocol 1.5 - Authority timing validation
 
 - Cancelled abandoned Unity Netcode authority-transfer measurements when local

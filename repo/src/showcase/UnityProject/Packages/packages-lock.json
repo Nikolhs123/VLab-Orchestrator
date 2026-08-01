@@ -114,7 +114,6 @@
       "depth": 0,
       "source": "local",
       "dependencies": {
-        "com.vlab.orchestrator.core": "0.3.0",
         "com.unity.nuget.newtonsoft-json": "3.2.2",
         "com.unity.ugui": "2.0.0",
         "com.unity.modules.animation": "1.0.0",
@@ -129,7 +128,6 @@
       "depth": 0,
       "source": "local",
       "dependencies": {
-        "com.vlab.orchestrator.core": "0.3.0",
         "com.unity.nuget.mono-cecil": "1.11.6",
         "com.unity.nuget.newtonsoft-json": "3.2.2",
         "com.unity.ugui": "2.0.0",
@@ -145,7 +143,6 @@
       "depth": 0,
       "source": "local",
       "dependencies": {
-        "com.vlab.orchestrator.core": "0.3.0",
         "com.unity.ai.navigation": "2.0.11",
         "com.unity.nuget.newtonsoft-json": "3.2.2",
         "com.unity.ugui": "2.0.0",
@@ -166,7 +163,6 @@
       "depth": 0,
       "source": "local",
       "dependencies": {
-        "com.vlab.orchestrator.core": "0.3.0",
         "com.unity.netcode.gameobjects": "2.11.0"
       }
     },
@@ -175,7 +171,6 @@
       "depth": 0,
       "source": "local",
       "dependencies": {
-        "com.vlab.orchestrator.core": "0.3.0",
         "com.unity.ugui": "2.0.0",
         "com.unity.modules.animation": "1.0.0",
         "com.unity.modules.particlesystem": "1.0.0",

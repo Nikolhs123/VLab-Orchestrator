@@ -1,7 +1,7 @@
 {
   "name": "com.vlab.orchestrator.backend.pun2",
   "displayName": "VLab Orchestrator Backend - Photon PUN 2",
-  "version": "0.3.0",
+  "version": "1.0.0",
   "unity": "6000.3",
   "description": "Optional Photon PUN 2 adapter boundary and project-authored reference source.",
   "dependencies": {

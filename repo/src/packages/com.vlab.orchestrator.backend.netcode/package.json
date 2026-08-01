@@ -1,7 +1,7 @@
 {
   "name": "com.vlab.orchestrator.backend.netcode",
   "displayName": "VLab Orchestrator Backend - Unity Netcode",
-  "version": "0.3.0",
+  "version": "1.0.0",
   "unity": "6000.3",
   "description": "Optional Unity Netcode for GameObjects adapter boundary and project-authored reference source.",
   "dependencies": {
