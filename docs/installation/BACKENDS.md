@@ -49,6 +49,23 @@ The setup window intentionally shows only dependency state:
 - Adapter implementation details remain a framework concern and are not exposed
   as user setup steps.
 
+## Safe Uninstall And Reinstall
+
+Use **Safely Uninstall SDK** in the selected backend tab instead of deleting a
+vendor package manually. The operation first removes the generated five-backend
+runtime, then removes only paths owned by that SDK and clears its stale scripting
+defines. Project configuration, showcase assets, benchmark exports, and the
+SDK-independent core are preserved. Photon shared libraries are deliberately
+retained when PUN 2 is removed because another Photon product may use them.
+
+The lightweight adapter boundary remains installed for PUN 2, Fusion, FishNet,
+and Mirror, allowing the audited SDK to be reinstalled with the same setup
+action. Netcode's adapter is also removed because its package declares Netcode
+as a required dependency. Re-add that adapter from the Netcode tab before
+reinstalling Netcode. The generated runtime activates again only after all five
+audited SDKs compile, preventing partially generated cross-backend source from
+causing compilation errors.
+
 Unity Netcode `2.11.0` is installed through Unity Package Manager. For FishNet,
 Mirror, PUN 2, and Fusion, the setup action first looks for the exact audited
 `.unitypackage` in Unity's licensed local Asset Store cache or Downloads folder.

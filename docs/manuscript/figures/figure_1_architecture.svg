@@ -1,0 +1,59 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1400" height="820" viewBox="0 0 1400 820">
+  <defs>
+    <style>
+      .title { font: 700 32px Georgia, serif; fill: #163b3a; }
+      .label { font: 700 22px Georgia, serif; fill: #163b3a; }
+      .body { font: 18px Georgia, serif; fill: #263331; }
+      .small { font: 16px Georgia, serif; fill: #263331; }
+      .box { stroke: #163b3a; stroke-width: 3; rx: 14; }
+      .arrow { stroke: #d36b32; stroke-width: 4; fill: none; marker-end: url(#head); }
+    </style>
+    <marker id="head" markerWidth="10" markerHeight="10" refX="9" refY="3" orient="auto">
+      <path d="M0,0 L10,3 L0,6 Z" fill="#d36b32"/>
+    </marker>
+  </defs>
+  <rect width="1400" height="820" fill="#f4f0e5"/>
+  <text x="700" y="52" text-anchor="middle" class="title">VLab Orchestrator layered architecture</text>
+
+  <rect x="245" y="85" width="910" height="88" class="box" fill="#dce9df"/>
+  <text x="700" y="120" text-anchor="middle" class="label">Existing Unity application</text>
+  <text x="700" y="150" text-anchor="middle" class="body">Mouse, UI, animation, instrument and domain-specific interaction scripts</text>
+
+  <path d="M700 173 L700 215" class="arrow"/>
+  <rect x="245" y="215" width="910" height="95" class="box" fill="#f7d9bf"/>
+  <text x="700" y="250" text-anchor="middle" class="label">Shared-object and interaction layer</text>
+  <text x="700" y="280" text-anchor="middle" class="body">Object definitions, access gates, avatars and nested transform contracts</text>
+
+  <path d="M700 310 L700 352" class="arrow"/>
+  <rect x="245" y="352" width="910" height="105" class="box" fill="#cfe1e5"/>
+  <text x="700" y="389" text-anchor="middle" class="label">Backend-independent orchestration core</text>
+  <text x="700" y="420" text-anchor="middle" class="body">Session lifecycle, FCFS queue, allocation policy and runtime interfaces</text>
+
+  <path d="M700 457 L700 500" class="arrow"/>
+  <rect x="65" y="500" width="235" height="105" class="box" fill="#ffffff"/>
+  <rect x="325" y="500" width="235" height="105" class="box" fill="#ffffff"/>
+  <rect x="585" y="500" width="235" height="105" class="box" fill="#ffffff"/>
+  <rect x="845" y="500" width="235" height="105" class="box" fill="#ffffff"/>
+  <rect x="1105" y="500" width="235" height="105" class="box" fill="#ffffff"/>
+  <text x="182" y="545" text-anchor="middle" class="label">Photon PUN 2</text>
+  <text x="182" y="578" text-anchor="middle" class="small">Adapter</text>
+  <text x="442" y="545" text-anchor="middle" class="label">Photon Fusion</text>
+  <text x="442" y="578" text-anchor="middle" class="small">Adapter</text>
+  <text x="702" y="540" text-anchor="middle" class="label">Unity Netcode</text>
+  <text x="702" y="572" text-anchor="middle" class="small">Adapter</text>
+  <text x="962" y="545" text-anchor="middle" class="label">FishNet</text>
+  <text x="962" y="578" text-anchor="middle" class="small">Adapter</text>
+  <text x="1222" y="545" text-anchor="middle" class="label">Mirror</text>
+  <text x="1222" y="578" text-anchor="middle" class="small">Adapter</text>
+
+  <path d="M182 605 L182 654 L700 654" stroke="#d36b32" stroke-width="4" fill="none"/>
+  <path d="M442 605 L442 654" stroke="#d36b32" stroke-width="4" fill="none"/>
+  <path d="M702 605 L702 654" stroke="#d36b32" stroke-width="4" fill="none"/>
+  <path d="M962 605 L962 654" stroke="#d36b32" stroke-width="4" fill="none"/>
+  <path d="M1222 605 L1222 654 L700 654" stroke="#d36b32" stroke-width="4" fill="none"/>
+  <path d="M700 654 L700 690" class="arrow"/>
+
+  <rect x="245" y="690" width="910" height="88" class="box" fill="#dce9df"/>
+  <text x="700" y="726" text-anchor="middle" class="label">Common evaluation layer</text>
+  <text x="700" y="756" text-anchor="middle" class="body">Deterministic scenarios, validity assertions, telemetry and CSV exports</text>
+</svg>

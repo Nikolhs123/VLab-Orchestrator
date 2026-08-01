@@ -194,6 +194,20 @@ namespace VLabOrchestrator.Showcase.Editor
                 $"and benchmark protocol {CurrentBenchmarkProtocolVersion}.");
         }
 
+        public static void ValidateBuildConfiguration()
+        {
+            if (Directory.Exists(GeneratedRuntimeRoot))
+            {
+                ValidateSelectedBuildConfiguration();
+                return;
+            }
+
+            Require(File.Exists(ScenePath), "Showcase scene was not found.");
+            Debug.Log(
+                "[VLab Orchestrator] Building the SDK-independent showcase. " +
+                "Install all five audited SDKs to activate multiplayer benchmark builds.");
+        }
+
         private static void ValidateSelectedBuildAssets(
             SerializedObject serializedConfig,
             GameObject instrument,
@@ -498,7 +512,7 @@ namespace VLabOrchestrator.Showcase.Editor
 
         public void OnPreprocessBuild(BuildReport report)
         {
-            ShowcaseValidation.ValidateSelectedBuildConfiguration();
+            ShowcaseValidation.ValidateBuildConfiguration();
         }
     }
 }

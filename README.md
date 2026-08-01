@@ -139,7 +139,7 @@ See [`docs/architecture/PREFAB_CONTRACTS.md`](docs/architecture/PREFAB_CONTRACTS
 | Core Unity edit-mode tests | Included |
 | Five-backend cold-start validation | Included and passing locally |
 | Windows publication build | Produced by repository build command |
-| Public open-source license | Pending ownership approval |
+| Public open-source license | MIT License |
 | Public GitHub release | Not yet created |
 
 ## Publication Boundary
@@ -164,7 +164,7 @@ rights-cleared samples, tests, documentation, and protocol definitions.
 
 ## License
 
-The repository is not yet licensed for public redistribution. `LICENSE.txt`
-contains a temporary private-preparation notice. It must be replaced by the
-institutionally approved OSI license before publication. Vendor SDKs are never
-covered by that future framework license and are excluded from version control.
+Project-authored code is released under the MIT License. Copyright is held by
+Nikolaos Marmaras, with institutional affiliation to the Hellenic Open
+University recorded in the license and publication metadata. Vendor SDKs are
+not covered by the project license and remain excluded from version control.

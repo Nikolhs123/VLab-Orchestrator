@@ -287,6 +287,17 @@ namespace VLabOrchestrator.Editor
                 }
                 GUI.enabled = true;
 
+                if (sdkAvailable || adapterPackageInstalled)
+                {
+                    GUILayout.Space(4f);
+                    using (new EditorGUI.DisabledScope(
+                               addRequest != null || EditorApplication.isPlayingOrWillChangePlaymode))
+                    {
+                        if (GUILayout.Button("Safely Uninstall SDK", GUILayout.Height(26f)))
+                            BackendSdkUninstaller.ConfirmAndUninstall(backend.Type, backend.DisplayName);
+                    }
+                }
+
                 using (new EditorGUILayout.HorizontalScope())
                 {
                     if (GUILayout.Button("Official setup guide", EditorStyles.linkLabel))

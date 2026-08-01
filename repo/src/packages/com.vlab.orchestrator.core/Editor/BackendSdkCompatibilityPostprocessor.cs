@@ -9,6 +9,11 @@ namespace VLabOrchestrator.Editor
     {
         private const string FishNetMirrorUpgradePath =
             "Assets/FishNet/Upgrading/MirrorUpgrade.cs";
+        private const string FishNetMirrorUpgradeMenuPath =
+            "Assets/FishNet/Upgrading/UpgradeFromMirrorMenu.cs";
+        private const string FishNetMirrorUpgradeDefaultGuard = "#if MIRROR\n";
+        private const string FishNetMirrorUpgradeOptInGuard =
+            "#if MIRROR && VLAB_ENABLE_FISHNET_MIRROR_UPGRADE\n";
         private const string FusionProjectConfigPath =
             "Assets/Photon/Fusion/Resources/NetworkProjectConfig.fusion";
         private const string FusionUnityRuntimePath =
@@ -17,6 +22,7 @@ namespace VLabOrchestrator.Editor
         [InitializeOnLoadMethod]
         private static void ScheduleCompatibilityRepair()
         {
+            DisableOptionalFishNetMirrorUpgrade();
             RepairImportedSdkCompatibility();
         }
 
@@ -37,9 +43,48 @@ namespace VLabOrchestrator.Editor
                     assetPath.StartsWith("Assets/FishNet/", StringComparison.Ordinal) ||
                     assetPath.StartsWith("Assets/Mirror/", StringComparison.Ordinal))
                 {
+                    DisableOptionalFishNetMirrorUpgrade();
                     EditorApplication.delayCall += RepairImportedSdkCompatibility;
                     return;
                 }
+            }
+        }
+
+        private static void DisableOptionalFishNetMirrorUpgrade()
+        {
+            string[] migrationToolPaths =
+            {
+                FishNetMirrorUpgradePath,
+                FishNetMirrorUpgradeMenuPath
+            };
+            bool changed = false;
+            foreach (string migrationToolPath in migrationToolPaths)
+            {
+                if (!File.Exists(migrationToolPath))
+                    continue;
+
+                string original = File.ReadAllText(migrationToolPath);
+                string contents = original.Replace("\r\n", "\n");
+                if (!contents.Contains(
+                        FishNetMirrorUpgradeDefaultGuard,
+                        StringComparison.Ordinal))
+                {
+                    continue;
+                }
+
+                contents = contents.Replace(
+                    FishNetMirrorUpgradeDefaultGuard,
+                    FishNetMirrorUpgradeOptInGuard);
+                File.WriteAllText(migrationToolPath, contents);
+                changed = true;
+            }
+
+            if (changed)
+            {
+                Debug.Log(
+                    "[VLab Orchestrator] Disabled FishNet's optional Mirror migration " +
+                    "utilities. Define VLAB_ENABLE_FISHNET_MIRROR_UPGRADE only when " +
+                    "performing a FishNet migration from an installed Mirror SDK.");
             }
         }
 

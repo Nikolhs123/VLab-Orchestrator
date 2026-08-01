@@ -1,0 +1,70 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1600" height="900" viewBox="0 0 1600 900">
+  <defs>
+    <style>
+      .h1 { font: 700 32px Arial, sans-serif; fill: #123b3a; }
+      .h2 { font: 700 23px Arial, sans-serif; fill: #123b3a; }
+      .body { font: 18px Arial, sans-serif; fill: #263b39; }
+      .small { font: 16px Arial, sans-serif; fill: #526563; }
+      .layer { stroke: #205d5b; stroke-width: 2.5; rx: 16; }
+      .adapter { stroke: #6b7f7c; stroke-width: 2; rx: 12; }
+      .flow { stroke: #d66b2f; stroke-width: 4; fill: none; marker-end: url(#arrow); }
+      .boundary { stroke: #8ca09d; stroke-width: 2; stroke-dasharray: 10 8; fill: none; rx: 22; }
+    </style>
+    <marker id="arrow" markerWidth="12" markerHeight="12" refX="10" refY="4" orient="auto">
+      <path d="M0,0 L11,4 L0,8 Z" fill="#d66b2f"/>
+    </marker>
+  </defs>
+  <rect width="1600" height="900" fill="#ffffff"/>
+
+  <text x="110" y="65" class="h1">Application-independent orchestration boundary</text>
+  <text x="110" y="98" class="small">Application behaviour remains separate from allocation policy, backend translation and measurement.</text>
+
+  <rect x="90" y="130" width="1420" height="650" class="boundary"/>
+  <text x="116" y="164" class="small">VLab ORCHESTRATOR</text>
+
+  <rect x="170" y="190" width="1260" height="105" class="layer" fill="#edf5f1"/>
+  <text x="800" y="230" text-anchor="middle" class="h2">Existing Unity application layer</text>
+  <text x="800" y="263" text-anchor="middle" class="body">Domain scripts · UI input · animation · instrument behaviour</text>
+
+  <path d="M800 295 L800 343" class="flow"/>
+
+  <rect x="170" y="343" width="1260" height="112" class="layer" fill="#fff2e8"/>
+  <text x="800" y="385" text-anchor="middle" class="h2">Shared orchestration contracts</text>
+  <text x="800" y="419" text-anchor="middle" class="body">Session view · FCFS queue · access gate · shared objects · avatars</text>
+
+  <path d="M800 455 L800 500" class="flow"/>
+
+  <rect x="135" y="500" width="250" height="105" class="adapter" fill="#f7f9f8"/>
+  <rect x="405" y="500" width="250" height="105" class="adapter" fill="#f7f9f8"/>
+  <rect x="675" y="500" width="250" height="105" class="adapter" fill="#f7f9f8"/>
+  <rect x="945" y="500" width="250" height="105" class="adapter" fill="#f7f9f8"/>
+  <rect x="1215" y="500" width="250" height="105" class="adapter" fill="#f7f9f8"/>
+  <text x="260" y="546" text-anchor="middle" class="h2">PUN 2</text>
+  <text x="260" y="578" text-anchor="middle" class="small">adapter</text>
+  <text x="530" y="546" text-anchor="middle" class="h2">Fusion</text>
+  <text x="530" y="578" text-anchor="middle" class="small">adapter</text>
+  <text x="800" y="540" text-anchor="middle" class="h2">Unity Netcode</text>
+  <text x="800" y="575" text-anchor="middle" class="small">adapter</text>
+  <text x="1070" y="546" text-anchor="middle" class="h2">FishNet</text>
+  <text x="1070" y="578" text-anchor="middle" class="small">adapter</text>
+  <text x="1340" y="546" text-anchor="middle" class="h2">Mirror</text>
+  <text x="1340" y="578" text-anchor="middle" class="small">adapter</text>
+
+  <path d="M260 605 L260 650 L800 650" stroke="#d66b2f" stroke-width="3" fill="none"/>
+  <path d="M530 605 L530 650" stroke="#d66b2f" stroke-width="3" fill="none"/>
+  <path d="M800 605 L800 650" stroke="#d66b2f" stroke-width="3" fill="none"/>
+  <path d="M1070 605 L1070 650" stroke="#d66b2f" stroke-width="3" fill="none"/>
+  <path d="M1340 605 L1340 650 L800 650" stroke="#d66b2f" stroke-width="3" fill="none"/>
+  <path d="M800 650 L800 685" class="flow"/>
+
+  <rect x="300" y="685" width="1000" height="72" class="layer" fill="#eaf1f5"/>
+  <text x="800" y="715" text-anchor="middle" class="h2">Common evaluation output</text>
+  <text x="800" y="743" text-anchor="middle" class="small">Scenario records · validity checks · performance samples · CSV manifests</text>
+
+  <rect x="170" y="815" width="20" height="20" fill="#edf5f1" stroke="#205d5b"/>
+  <text x="205" y="831" class="small">backend-independent</text>
+  <rect x="430" y="815" width="20" height="20" fill="#f7f9f8" stroke="#6b7f7c"/>
+  <text x="465" y="831" class="small">backend-specific translation</text>
+  <line x1="795" y1="825" x2="845" y2="825" stroke="#d66b2f" stroke-width="4"/>
+  <text x="860" y="831" class="small">control and measurement flow</text>
+</svg>

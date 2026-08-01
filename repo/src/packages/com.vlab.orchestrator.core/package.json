@@ -3,6 +3,7 @@
   "displayName": "VLab Orchestrator Core",
   "version": "0.3.0",
   "unity": "6000.3",
+  "license": "MIT",
   "description": "Backend-independent access allocation, configuration, benchmark protocol, and editor workspace for collaborative Unity research applications.",
   "keywords": [
     "multiplayer",
