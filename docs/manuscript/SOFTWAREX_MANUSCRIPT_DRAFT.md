@@ -60,7 +60,7 @@ The contribution is therefore not another networking protocol and not a claim th
 
 The software is distributed as a core Unity package, optional backend adapter packages, a rights-cleared showcase project, documentation, and evaluation data. The core package contains no laboratory-specific model requirement. The showcase uses Unity primitives so that installation, execution, and review do not depend on restricted media from the original laboratory.
 
-![Layered VLab Orchestrator architecture](figures/figure_1_architecture_v2.svg)
+![Layered VLab Orchestrator architecture](figures/figure_1_architecture.svg)
 
 **Fig. 1.** Intended separation of application behaviour, shared orchestration contracts, backend adapters, and the common telemetry layer.
 
@@ -92,7 +92,7 @@ The telemetry subsystem records session lifecycle, queue decisions, access reque
 
 `OrchestrationScenarioRunner` replaces manual timing with deterministic commands. Scenarios specify participant count, cycles, hold durations, contention pattern, and target manipulation. The authoritative runner waits for both users, executes the same logical sequence, checks acknowledgements and convergence, releases final ownership, and exports only after terminal assertions have been evaluated. A visible completion state distinguishes valid exports from runs that are safe to inspect but unsuitable for analysis.
 
-![Validity-aware deterministic benchmark workflow](figures/figure_2_protocol_v3.svg)
+![Validity-aware deterministic benchmark workflow](figures/figure_2_protocol.svg)
 
 **Fig. 2.** Implemented benchmark workflow and its terminal classification according to predefined protocol checks.
 

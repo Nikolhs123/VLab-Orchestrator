@@ -19,9 +19,9 @@ audio, logos, or avatar media.
 | Mirror | 96.0.1 | Upstream MIT license; SDK still excluded for a consistent clean boundary |
 
 Users must obtain these dependencies through their official distribution
-channels and accept their respective current licenses. The framework's future
-open-source license will cover only project-authored code and will not relicense
-any provider SDK. Exact versions and installation steps are documented in
+channels and accept their respective current licenses. The framework's MIT
+License covers only project-authored code and does not relicense any provider
+SDK. Exact versions and installation steps are documented in
 `docs/installation/BACKENDS.md`.
 
 Authoritative terms and notices should be reviewed at release time:

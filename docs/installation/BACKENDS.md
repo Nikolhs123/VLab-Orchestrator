@@ -33,11 +33,15 @@ can break an SDK import.
 2. Open **VLab Orchestrator > Setup**.
 3. Select a backend tab.
 4. Use the single install action shown in its red card.
-5. For PUN 2 or Fusion, create a separate application in the Photon dashboard
+5. If PUN 2 triggers Unity's API Updater, approve migration for all affected
+   files. Select the project-wide **Yes, for these and other files that might be
+   found** option when Unity presents it. PUN 2.55 predates Unity 6 API changes,
+   and declining leaves its locally imported provider scripts uncompilable.
+6. For PUN 2 or Fusion, create a separate application in the Photon dashboard
    and paste its App ID into the settings asset selected by the setup window.
-6. When the card turns green, adapter, dependency, compilation, and credential
+7. When the card turns green, adapter, dependency, compilation, and credential
    setup are complete.
-7. Select **Open Project Configuration** for prefabs, policy, and benchmark settings.
+8. Select **Open Project Configuration** for prefabs, policy, and benchmark settings.
 
 The setup window intentionally shows only dependency state:
 
@@ -106,7 +110,7 @@ This keeps the SoftwareX artifact limited to project-authored source while
 making every optional dependency installable from one setup button after any
 provider-controlled acquisition step.
 
-## Audited Import Order
+## Recommended Import Sequence
 
 1. Open the project and wait for Unity Package Manager to resolve the baseline.
 2. Confirm Unity Netcode `2.11.0`.
@@ -115,6 +119,11 @@ provider-controlled acquisition step.
 5. Import FishNet `4.6.22`.
 6. Import Mirror `96.0.1`.
 7. Wait for compilation and confirm every backend tab is green.
+
+The setup lifecycle is designed to tolerate a different installation order.
+The sequence above is recommended because it makes provider prompts and Photon
+compatibility easier to diagnose. In every order, allow Unity to finish package
+resolution, API migration, import, and compilation before starting the next SDK.
 
 FishNet `4.6.22` contains an optional Mirror migration editor utility that
 references `Mirror.NetworkTransformChild`, which no longer exists in Mirror

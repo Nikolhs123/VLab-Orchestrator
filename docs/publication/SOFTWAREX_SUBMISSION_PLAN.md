@@ -49,9 +49,10 @@ future extension and is not part of the paper's evaluated contribution.
 
 ### 2. Resolve Rights and License
 
-Before making code public, confirm ownership of the new orchestration source and
-permission to publish any inherited V-Lab code or assets. Choose an approved
-open-source license, preferably MIT or Apache-2.0 if institutionally permitted.
+The publication repository uses the MIT License for project-authored code. It
+contains a separately authored Unity-primitives showcase and excludes inherited
+V-Lab media, provider SDK payloads, and credentials. Keep the documented source,
+asset, and third-party boundaries under review for every release.
 
 ### 3. Create the Publication Repository
 
@@ -79,8 +80,11 @@ virtual environment. Verify that:
 
 - The core imports without any networking SDK.
 - Each optional backend reports a clear missing-dependency message.
-- Installing one supported SDK enables only its adapter.
-- The generic sample completes a two-client session and export.
+- Installing SDKs in a clean clone does not introduce compilation errors.
+- Safe uninstall/reinstall preserves the SDK-independent project.
+- Installing the complete audited matrix activates the generated runtime.
+- The generic sample completes a two-client session and valid export for each
+  selected backend.
 
 ### 5. Freeze and Run the Final Experiment
 
@@ -94,23 +98,15 @@ Draft the manuscript structure early, but finalize its claims, metadata,
 versions, repository link, and quantitative results only after the software
 release and dataset are frozen.
 
-## Why the Existing Repository Is Not the Submission Artifact
+## Separation From The Development Project
 
-The current repository is useful and should be preserved, but it is not yet a
-SoftwareX-ready distribution because:
-
-- It derives from the broader XR2Learn V-Lab repository.
-- It contains third-party Photon, FishNet, and Mirror source trees.
-- It contains application assets whose redistribution rights require review.
-- It may contain backend settings or application identifiers.
-- The framework source is not currently packaged under the required `repo/src`
-  publication structure.
-- The working tree is not a clean tagged release.
-- A new user cannot yet import only the framework into a clean Unity project.
-
-The existing project can still be used as the scientific case study and internal
-integration environment. The public repository should be the reusable framework
-extracted from it.
+This repository is the SoftwareX distribution. It is separate from the broader
+XR2Learn V-Lab development project and contains the extracted project-authored
+framework, five adapter implementations, rights-cleared generic showcase,
+tests, protocol documentation, and retained evaluation data. Provider SDKs,
+credentials, generated runtime artifacts, and original V-Lab media remain
+excluded. The private development project remains a case-study and engineering
+environment; it is not the publication download.
 
 ## Testing Without Redistributing SDKs
 

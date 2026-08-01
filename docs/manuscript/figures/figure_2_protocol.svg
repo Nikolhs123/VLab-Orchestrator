@@ -1,55 +1,72 @@
-<svg xmlns="http://www.w3.org/2000/svg" width="1400" height="620" viewBox="0 0 1400 620">
+<svg xmlns="http://www.w3.org/2000/svg" width="1600" height="820" viewBox="0 0 1600 820">
   <defs>
     <style>
-      .title { font: 700 32px Georgia, serif; fill: #173b3a; }
-      .step { font: 700 21px Georgia, serif; fill: #173b3a; }
-      .body { font: 17px Georgia, serif; fill: #273532; }
-      .box { stroke: #173b3a; stroke-width: 3; rx: 18; }
-      .arrow { stroke: #d36b32; stroke-width: 5; fill: none; marker-end: url(#head); }
+      .title { font: 700 42px Arial, sans-serif; fill: #123b3a; }
+      .step { font: 700 30px Arial, sans-serif; fill: #123b3a; }
+      .body { font: 25px Arial, sans-serif; fill: #344a47; }
+      .num { font: 700 29px Arial, sans-serif; fill: #ffffff; }
+      .box { stroke: #2b6663; stroke-width: 4; }
+      .flow { stroke: #d66b2f; stroke-width: 7; fill: none; marker-end: url(#arrow); }
     </style>
-    <marker id="head" markerWidth="10" markerHeight="10" refX="9" refY="3" orient="auto">
-      <path d="M0,0 L10,3 L0,6 Z" fill="#d36b32"/>
+    <marker id="arrow" markerWidth="14" markerHeight="14" refX="11" refY="5" orient="auto">
+      <path d="M0,0 L13,5 L0,10 Z" fill="#d66b2f"/>
     </marker>
   </defs>
-  <rect width="1400" height="620" fill="#f4f0e5"/>
-  <text x="700" y="55" text-anchor="middle" class="title">Validity-aware deterministic benchmark workflow</text>
+  <rect width="1600" height="820" fill="#ffffff"/>
+  <text x="65" y="62" class="title">Deterministic scenario and evidence lifecycle</text>
 
-  <rect x="40" y="120" width="230" height="145" class="box" fill="#dce9df"/>
-  <text x="155" y="160" text-anchor="middle" class="step">1. Arm protocol</text>
-  <text x="155" y="197" text-anchor="middle" class="body">Select scenario, backend,</text>
-  <text x="155" y="222" text-anchor="middle" class="body">users, cycles and timing</text>
+  <line x1="160" y1="145" x2="1440" y2="145" stroke="#d9e2e0" stroke-width="12"/>
 
-  <path d="M270 192 L320 192" class="arrow"/>
-  <rect x="330" y="120" width="230" height="145" class="box" fill="#cfe1e5"/>
-  <text x="445" y="160" text-anchor="middle" class="step">2. Synchronize</text>
-  <text x="445" y="197" text-anchor="middle" class="body">Wait for both users and</text>
-  <text x="445" y="222" text-anchor="middle" class="body">shared runtime readiness</text>
+  <g transform="translate(45 0)">
+    <circle cx="115" cy="145" r="34" fill="#205d5b"/><text x="115" y="155" text-anchor="middle" class="num">1</text>
+    <rect x="0" y="205" width="230" height="145" rx="15" class="box" fill="#edf5f1"/>
+    <text x="115" y="252" text-anchor="middle" class="step">Configure</text>
+    <text x="115" y="295" text-anchor="middle" class="body">Backend, scenario,</text>
+    <text x="115" y="328" text-anchor="middle" class="body">users and timing</text>
+  </g>
+  <g transform="translate(355 0)">
+    <circle cx="115" cy="145" r="34" fill="#205d5b"/><text x="115" y="155" text-anchor="middle" class="num">2</text>
+    <rect x="0" y="205" width="230" height="145" rx="15" class="box" fill="#edf5f1"/>
+    <text x="115" y="252" text-anchor="middle" class="step">Synchronize</text>
+    <text x="115" y="295" text-anchor="middle" class="body">Wait for users and</text>
+    <text x="115" y="328" text-anchor="middle" class="body">shared runtime</text>
+  </g>
+  <g transform="translate(665 0)">
+    <circle cx="115" cy="145" r="34" fill="#d66b2f"/><text x="115" y="155" text-anchor="middle" class="num">3</text>
+    <rect x="0" y="205" width="230" height="145" rx="15" class="box" fill="#fff2e8"/>
+    <text x="115" y="252" text-anchor="middle" class="step">Execute</text>
+    <text x="115" y="295" text-anchor="middle" class="body">Request, rotate,</text>
+    <text x="115" y="328" text-anchor="middle" class="body">hold and release</text>
+  </g>
+  <g transform="translate(975 0)">
+    <circle cx="115" cy="145" r="34" fill="#205d5b"/><text x="115" y="155" text-anchor="middle" class="num">4</text>
+    <rect x="0" y="205" width="230" height="145" rx="15" class="box" fill="#edf5f1"/>
+    <text x="115" y="252" text-anchor="middle" class="step">Validate</text>
+    <text x="115" y="295" text-anchor="middle" class="body">Commands, cycles,</text>
+    <text x="115" y="328" text-anchor="middle" class="body">transfers, tolerance</text>
+  </g>
+  <g transform="translate(1285 0)">
+    <circle cx="115" cy="145" r="34" fill="#205d5b"/><text x="115" y="155" text-anchor="middle" class="num">5</text>
+    <rect x="0" y="205" width="230" height="145" rx="15" class="box" fill="#edf5f1"/>
+    <text x="115" y="252" text-anchor="middle" class="step">Export</text>
+    <text x="115" y="295" text-anchor="middle" class="body">Records, summaries,</text>
+    <text x="115" y="328" text-anchor="middle" class="body">manifest, metadata</text>
+  </g>
 
-  <path d="M560 192 L610 192" class="arrow"/>
-  <rect x="620" y="120" width="230" height="145" class="box" fill="#f7d9bf"/>
-  <text x="735" y="160" text-anchor="middle" class="step">3. Execute</text>
-  <text x="735" y="197" text-anchor="middle" class="body">Request, grant, rotate,</text>
-  <text x="735" y="222" text-anchor="middle" class="body">hold, release and repeat</text>
+  <path d="M1400 350 L1400 470 L1090 470" class="flow"/>
+  <rect x="690" y="410" width="400" height="120" rx="15" class="box" fill="#e8f4eb"/>
+  <text x="890" y="457" text-anchor="middle" class="step">VALID</text>
+  <text x="890" y="500" text-anchor="middle" class="body">Retain export for analysis</text>
 
-  <path d="M850 192 L900 192" class="arrow"/>
-  <rect x="910" y="120" width="230" height="145" class="box" fill="#cfe1e5"/>
-  <text x="1025" y="160" text-anchor="middle" class="step">4. Validate</text>
-  <text x="1025" y="197" text-anchor="middle" class="body">Check acknowledgements,</text>
-  <text x="1025" y="222" text-anchor="middle" class="body">cycles and convergence</text>
+  <path d="M1400 350 L1400 650 L1090 650" class="flow"/>
+  <rect x="690" y="590" width="400" height="120" rx="15" class="box" fill="#f9e7e4"/>
+  <text x="890" y="637" text-anchor="middle" class="step">INVALID / INTERRUPTED</text>
+  <text x="890" y="680" text-anchor="middle" class="body">Retain evidence; do not analyse</text>
 
-  <path d="M1140 192 L1190 192" class="arrow"/>
-  <rect x="1200" y="120" width="160" height="145" class="box" fill="#dce9df"/>
-  <text x="1280" y="160" text-anchor="middle" class="step">5. Export</text>
-  <text x="1280" y="197" text-anchor="middle" class="body">Stage files and</text>
-  <text x="1280" y="222" text-anchor="middle" class="body">write manifest</text>
-
-  <path d="M1025 265 L1025 340 L880 340" class="arrow"/>
-  <rect x="535" y="340" width="345" height="105" class="box" fill="#dce9df"/>
-  <text x="707" y="380" text-anchor="middle" class="step">Protocol valid</text>
-  <text x="707" y="414" text-anchor="middle" class="body">Complete export, safe for declared analysis</text>
-
-  <path d="M1025 265 L1025 490 L880 490" class="arrow"/>
-  <rect x="535" y="490" width="345" height="105" class="box" fill="#f2c8c2"/>
-  <text x="707" y="530" text-anchor="middle" class="step">Protocol invalid</text>
-  <text x="707" y="564" text-anchor="middle" class="body">Retain evidence, label “do not use”</text>
+  <rect x="45" y="430" width="555" height="245" rx="15" fill="#f7f9f8" stroke="#8ca09d" stroke-width="4"/>
+  <text x="80" y="482" class="step">Interpretation boundary</text>
+  <text x="80" y="535" class="body">Passing checks confirms protocol</text>
+  <text x="80" y="571" class="body">completion only. It does not establish</text>
+  <text x="80" y="607" class="body">backend equivalence, independent</text>
+  <text x="80" y="643" class="body">replication, or statistical superiority.</text>
 </svg>
