@@ -9,6 +9,7 @@
 | Showcase room and props | This repository | Unity primitive meshes and built-in components | Included |
 | Showcase UI | This repository | IMGUI and project-authored editor/runtime code | Included |
 | Controlled-child marker | This repository | Project-authored C# component | Included |
+| Installation screenshots | This repository | Captured from the rights-cleared showcase and provider setup interfaces for documentation | Included |
 
 No external model, texture, font, audio, logo, animation, or avatar media is
 required by the publication showcase.

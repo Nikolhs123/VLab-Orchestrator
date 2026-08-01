@@ -1,5 +1,8 @@
 # Optional Backend Installation
 
+For a complete screenshot-led clean-clone workflow, see
+[`ILLUSTRATED_GUIDE.md`](ILLUSTRATED_GUIDE.md).
+
 The dependency-free showcase requires no multiplayer SDK. Production adapters
 require the corresponding official dependency.
 

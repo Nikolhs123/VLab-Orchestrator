@@ -106,6 +106,8 @@ this repository. The setup window verifies the pinned versions and uses packages
 obtained through each evaluator's official provider account. Full details and
 troubleshooting are in
 [`docs/installation/BACKENDS.md`](docs/installation/BACKENDS.md).
+For a screenshot-led walkthrough, use the
+[`Illustrated Installation and Evaluation Guide`](docs/installation/ILLUSTRATED_GUIDE.md).
 
 ## Validation And Tests
 
@@ -242,6 +244,7 @@ rights-cleared samples, tests, documentation, and protocol definitions.
 - [Unity package architecture](docs/architecture/PACKAGE_ARCHITECTURE.md)
 - [Prefab and synchronization contracts](docs/architecture/PREFAB_CONTRACTS.md)
 - [Backend installation boundaries](docs/installation/BACKENDS.md)
+- [Illustrated installation and evaluation guide](docs/installation/ILLUSTRATED_GUIDE.md)
 - [SoftwareX submission plan](docs/publication/SOFTWAREX_SUBMISSION_PLAN.md)
 - [Research protocol](docs/publication/BENCHMARK_PROTOCOL_AND_REPRODUCIBILITY.md)
 - [Asset provenance](ASSET_PROVENANCE.md)
