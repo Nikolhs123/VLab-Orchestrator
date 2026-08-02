@@ -6,6 +6,7 @@ version: 1.0.0
 date-released: 2026-08-02
 doi: 10.5281/zenodo.21756997
 url: "https://github.com/Nikolhs123/VLab-Orchestrator"
+license: MIT
 authors:
   - family-names: Marmaras
     given-names: Nikolaos
