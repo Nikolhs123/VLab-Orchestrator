@@ -3,6 +3,7 @@
 [![MIT License](https://img.shields.io/badge/license-MIT-0f766e.svg)](LICENSE.txt)
 [![Illustrated Guide](https://img.shields.io/badge/guide-illustrated-e5b64f.svg)](docs/installation/ILLUSTRATED_GUIDE.md)
 [![Release](https://img.shields.io/badge/release-v1.0.0-2563eb.svg)](https://github.com/Nikolhs123/VLab-Orchestrator/releases/tag/v1.0.0)
+[![DOI](https://zenodo.org/badge/DOI/10.5281/zenodo.21756997.svg)](https://doi.org/10.5281/zenodo.21756997)
 [![Unity](https://img.shields.io/badge/Unity-6000.3.11f1-111827.svg)](repo/src/showcase/UnityProject/ProjectSettings/ProjectVersion.txt)
 
 VLab Orchestrator is a Unity research-software framework for applying one
@@ -220,7 +221,7 @@ See [`docs/architecture/PREFAB_CONTRACTS.md`](docs/architecture/PREFAB_CONTRACTS
 | Five-backend cold-start validation | Included and passing locally |
 | Windows publication build | Produced by repository build command |
 | Public open-source license | MIT License |
-| Public GitHub repository | Prepared; visibility and archival release pending |
+| Public GitHub repository | Published and archived as `v1.0.0` with DOI `10.5281/zenodo.21756997` |
 
 ## Publication Boundary
 
