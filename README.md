@@ -260,5 +260,6 @@ rights-cleared samples, tests, documentation, and protocol definitions.
 
 Project-authored code is released under the MIT License. Copyright is held by
 Nikolaos Marmaras, with institutional affiliation to the Hellenic Open
-University recorded in the license and publication metadata. Vendor SDKs are
-not covered by the project license and remain excluded from version control.
+University and [ORCID 0009-0007-1714-4026](https://orcid.org/0009-0007-1714-4026)
+recorded in the publication metadata. Vendor SDKs are not covered by the project
+license and remain excluded from version control.

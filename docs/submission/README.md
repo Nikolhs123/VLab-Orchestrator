@@ -14,7 +14,7 @@ Manager requests an editable file.
 
 ## Confirm Before Submission
 
-- Corresponding author's email and postal address
+- Corresponding author's postal address, if requested by Editorial Manager
 - Final author order, affiliations, and ORCIDs
 - Both authors' approval of the CRediT allocation
 - Both authors' competing-interest declarations

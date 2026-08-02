@@ -4,13 +4,11 @@
 
 ## Authors
 
-Nikolaos Marmaras^[Hellenic Open University; ORCID pending]
+Nikolaos Marmaras^[Hellenic Open University; https://orcid.org/0009-0007-1714-4026]
 
 Dimitris Kalles^[Hellenic Open University; https://orcid.org/0000-0003-0364-5966]
 
-[CO-AUTHORS, AFFILIATIONS, AND ORCIDS]
-
-Corresponding author: [EMAIL]
+Corresponding author: Nikolaos Marmaras; nikolaos.marmaras@ac.eap.gr
 
 ## Abstract
 
@@ -29,7 +27,7 @@ VLab Orchestrator is a Unity framework intended to reduce direct coupling betwee
 | C5 Languages, tools, and services | C#, Unity 6000.3.11f1, Unity Package Manager, CSV |
 | C6 Requirements | Unity 6000.3.11f1; Windows 11 validated; selected third-party networking SDK and credentials where required |
 | C7 Documentation | Repository README and `docs/` directory |
-| C8 Support email | [SUPPORT EMAIL] |
+| C8 Support email | nikolaos.marmaras@ac.eap.gr |
 
 ## 1. Motivation and significance
 

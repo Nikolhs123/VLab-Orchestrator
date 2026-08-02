@@ -36,7 +36,7 @@ inspectable across multiple networking implementations while documenting the
 legal and technical boundary around third-party SDK installation.
 
 The manuscript is original, is not under consideration elsewhere, and has been
-approved by all authors. [CONFIRM BEFORE SUBMISSION]
+approved by all authors.
 
 Thank you for considering our manuscript.
 
@@ -45,7 +45,7 @@ Sincerely,
 Nikolaos Marmaras  
 Corresponding author  
 Hellenic Open University  
-[CORRESPONDING EMAIL]  
-[POSTAL ADDRESS, IF REQUIRED]
+nikolaos.marmaras@ac.eap.gr
+https://orcid.org/0009-0007-1714-4026
 
 On behalf of Nikolaos Marmaras and Dimitris Kalles

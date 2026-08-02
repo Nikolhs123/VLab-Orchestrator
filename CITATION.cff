@@ -10,6 +10,8 @@ license: MIT
 authors:
   - family-names: Marmaras
     given-names: Nikolaos
+    affiliation: Hellenic Open University
+    orcid: "https://orcid.org/0009-0007-1714-4026"
 abstract: >-
   A Unity orchestration and evaluation layer for shared-access collaborative
   applications across heterogeneous multiplayer networking backends.
