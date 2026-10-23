@@ -42,6 +42,7 @@ namespace Thesis.Orchestration.Backends.Fusion
         [Networked] public NetworkBool SessionStartedNetworked { get; set; }
         [Networked] private NetworkBool QueueRuntimeActiveNetworked { get; set; }
         [Networked] private NetworkString<_64> CurrentInstrumentIdNetworked { get; set; }
+        [Networked] private NetworkString<_64> SessionRunIdNetworked { get; set; }
         [Networked] private NetworkString<_64> CurrentHolderUserIdNetworked { get; set; }
         [Networked] private NetworkString<_512> CurrentQueueJoinedNetworked { get; set; }
         [Networked] private NetworkString<_512> ReplicatedHistoryJoinedNetworked { get; set; }
@@ -54,6 +55,9 @@ namespace Thesis.Orchestration.Backends.Fusion
 
         public string CurrentInstrumentId =>
             hasSpawned ? SafeRead(CurrentInstrumentIdNetworked) : string.Empty;
+
+        public string SessionRunId =>
+            hasSpawned ? SafeRead(SessionRunIdNetworked) : string.Empty;
 
         public string CurrentHolderUserId =>
             hasSpawned
@@ -82,7 +86,7 @@ namespace Thesis.Orchestration.Backends.Fusion
         {
             if (Instance != null && Instance != this)
             {
-                Debug.LogWarning("[SessionQueueRuntimeFusion] Duplicate instance found. Destroying duplicate.", this);
+                Debug.LogWarning($"[SessionQueueRuntimeFusion] Duplicate instance found. Destroying duplicate instance={GetInstanceID()} (singleton={Instance.GetInstanceID()}).", this);
                 Destroy(gameObject);
                 return;
             }
@@ -133,13 +137,15 @@ namespace Thesis.Orchestration.Backends.Fusion
             if (sharedRegistry == null)
                 sharedRegistry = Thesis.Orchestration.SharedSync.SharedObjectSyncRegistry.Instance;
 
-            Log($"Spawned. StateAuthority={Object.HasStateAuthority}, IsValid={Object != null && Object.IsValid}");
+            Log($"Spawned. StateAuthority={Object.HasStateAuthority}, IsValid={Object != null && Object.IsValid}, " +
+                $"objectId={Object.Id}, instance={GetInstanceID()}, isSingleton={Instance == this}");
             PullSharedUserCardStats();
             OnRuntimeStateUpdated?.Invoke();
         }
 
         public override void Despawned(NetworkRunner runner, bool hasState)
         {
+            Log($"Despawned. instance={GetInstanceID()}, hasState={hasState}, isSingleton={Instance == this}");
             hasSpawned = false;
             hasInitializedForCurrentSession = false;
             timeoutTimer = 0f;
@@ -156,6 +162,9 @@ namespace Thesis.Orchestration.Backends.Fusion
             {
                 TryInitializeQueueRuntime();
             }
+
+            if (QueueRuntimeActiveNetworked && !sharedLogic.IsInitialized)
+                RestoreQueueAuthorityAfterStateAuthorityChange();
 
             if (!QueueRuntimeActiveNetworked || !sharedLogic.IsInitialized)
                 return;
@@ -278,9 +287,12 @@ namespace Thesis.Orchestration.Backends.Fusion
         }
 
         [Rpc(RpcSources.All, RpcTargets.StateAuthority)]
-        private void RPC_RequestBeginSession(string requestingUserId)
+        private void RPC_RequestBeginSession(string requestingUserId, RpcInfo info = default)
         {
             if (!Object.HasStateAuthority)
+                return;
+
+            if (!QueueRequestIdentity.Accept(requestingUserId, GetSenderUserId(info), "BeginSession", CurrentInstrumentId))
                 return;
 
             if (SessionStartedNetworked)
@@ -296,9 +308,12 @@ namespace Thesis.Orchestration.Backends.Fusion
         }
 
         [Rpc(RpcSources.All, RpcTargets.StateAuthority)]
-        private void RPC_RequestAccess(string userId, string instrumentId)
+        private void RPC_RequestAccess(string userId, string instrumentId, RpcInfo info = default)
         {
             if (!Object.HasStateAuthority || !QueueRuntimeActiveNetworked || !sharedLogic.IsInitialized)
+                return;
+
+            if (!QueueRequestIdentity.Accept(userId, GetSenderUserId(info), "RequestAccess", instrumentId))
                 return;
 
             // Record the request on the authoritative side so wait times and counts are consistent.
@@ -314,13 +329,26 @@ namespace Thesis.Orchestration.Backends.Fusion
         }
 
         [Rpc(RpcSources.All, RpcTargets.StateAuthority)]
-        private void RPC_ReleaseAccess(string userId, string instrumentId)
+        private void RPC_ReleaseAccess(string userId, string instrumentId, RpcInfo info = default)
         {
             if (!Object.HasStateAuthority || !QueueRuntimeActiveNetworked || !sharedLogic.IsInitialized)
                 return;
 
+            if (!QueueRequestIdentity.Accept(userId, GetSenderUserId(info), "ReleaseAccess", instrumentId))
+                return;
+
             QueueDecision decision = sharedLogic.ReleaseAccess(userId, instrumentId);
             HandleDecisionAuthoritatively($"ReleaseAccess({userId})", decision);
+        }
+
+        // A locally invoked RPC reports no remote source; the sender is then the local player.
+        private string GetSenderUserId(RpcInfo info)
+        {
+            PlayerRef sender = info.Source == PlayerRef.None && info.IsInvokeLocal ? Runner.LocalPlayer : info.Source;
+            if (sender == PlayerRef.None)
+                return null;
+
+            return sessionOrchestrator != null ? sessionOrchestrator.ConvertPlayerToUserId(sender) : $"Player_{sender.RawEncoded}";
         }
 
         [Rpc(RpcSources.All, RpcTargets.StateAuthority)]
@@ -338,9 +366,12 @@ namespace Thesis.Orchestration.Backends.Fusion
         }
 
         [Rpc(RpcSources.All, RpcTargets.StateAuthority)]
-        private void RPC_Heartbeat(string userId, string instrumentId)
+        private void RPC_Heartbeat(string userId, string instrumentId, RpcInfo info = default)
         {
             if (!Object.HasStateAuthority || !QueueRuntimeActiveNetworked || !sharedLogic.IsInitialized)
+                return;
+
+            if (!QueueRequestIdentity.Accept(userId, GetSenderUserId(info), "Heartbeat", instrumentId))
                 return;
 
             sharedLogic.RegisterHeartbeat(userId, instrumentId);
@@ -356,6 +387,23 @@ namespace Thesis.Orchestration.Backends.Fusion
                 return;
 
             SessionLifecycleTracker.Instance?.ApplyRowJson(rowJson);
+        }
+
+        [Rpc(RpcSources.All, RpcTargets.StateAuthority)]
+        private void RPC_SubmitAuthorityTransferSnapshot(string rowJson)
+        {
+            if (!Object.HasStateAuthority)
+                return;
+
+            AuthorityTransferRecorder.Instance?.ApplyCompletedRowJson(rowJson);
+        }
+
+        public void SubmitAuthorityTransferSnapshot(string rowJson)
+        {
+            if (!hasSpawned || string.IsNullOrWhiteSpace(rowJson) || Object == null || Object.HasStateAuthority)
+                return;
+
+            RPC_SubmitAuthorityTransferSnapshot(rowJson);
         }
 
         private void TryInitializeQueueRuntime()
@@ -389,6 +437,7 @@ namespace Thesis.Orchestration.Backends.Fusion
 
             string instrumentId = instrumentDefinition.ObjectId;
             CurrentInstrumentIdNetworked = instrumentId;
+            SessionRunIdNetworked = SessionRunIdentity.NewId();
 
             IEnumerable<string> userIds = sessionOrchestrator != null
                 ? sessionOrchestrator.CurrentPlayers.OrderBy(p => p.RawEncoded).Select(sessionOrchestrator.ConvertPlayerToUserId)
@@ -402,6 +451,35 @@ namespace Thesis.Orchestration.Backends.Fusion
 
             TLog("QueueRuntimeInitialized", GetLocalUserId(), instrumentId, "Fusion queue runtime initialized on state authority.");
             BroadcastState("Queue runtime initialized.");
+        }
+
+        // The runtime is a master-client object: when the state authority (Shared-mode master) leaves, Fusion
+        // hands state authority to the new master, which has only the networked snapshot and no shared logic.
+        private void RestoreQueueAuthorityAfterStateAuthorityChange()
+        {
+            string instrumentId = CurrentInstrumentId;
+            if (string.IsNullOrWhiteSpace(instrumentId))
+                return;
+
+            string holderBefore = CurrentHolderUserId;
+            List<string> queueBefore = CurrentQueueSnapshot;
+            List<string> activeUserIds = sessionOrchestrator != null
+                ? sessionOrchestrator.CurrentPlayers.OrderBy(p => p.RawEncoded).Select(sessionOrchestrator.ConvertPlayerToUserId).ToList()
+                : new List<string>();
+
+            sharedLogic.RestoreFromReplicatedState(instrumentId, activeUserIds, holderBefore, queueBefore, ReplicatedHistorySnapshot);
+            hasInitializedForCurrentSession = true;
+            timeoutTimer = 0f;
+
+            TLog("QueueAuthorityMigrated", GetLocalUserId(), instrumentId,
+                $"Restored queue authority from networked state after state-authority change: holder={holderBefore} queue={string.Join("|", queueBefore)}.");
+
+            sharedLogic.SyncUsers(
+                instrumentId,
+                activeUserIds,
+                removedHolderId => sharedLogic.ReleaseAccess(removedHolderId, instrumentId));
+
+            BroadcastState("Queue authority restored after state-authority change.");
         }
 
         private void CheckTimeoutForCurrentInstrument()

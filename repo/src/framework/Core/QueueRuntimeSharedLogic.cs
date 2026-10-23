@@ -47,6 +47,42 @@ namespace Thesis.Orchestration.Core
             }
         }
 
+        // Rebuilds authoritative state on a participant that has just become queue authority (e.g. PUN2
+        // master migration), from the last replicated snapshot. Holder and queue order are restored verbatim,
+        // not replayed through the allocation policy. The holder and queued users are registered even if they
+        // have already left, so the next SyncUsers records their departure like any other.
+        // Not restored: per-user request counters and the holder's idle clock (restarts at restore time).
+        public void RestoreFromReplicatedState(
+            string instrumentId,
+            IEnumerable<string> activeUserIds,
+            string holderUserId,
+            IEnumerable<string> waitingQueue,
+            IEnumerable<string> replicatedHistory)
+        {
+            List<string> queue = waitingQueue?.Where(x => !string.IsNullOrWhiteSpace(x)).ToList() ?? new List<string>();
+            bool hasHolder = !string.IsNullOrWhiteSpace(holderUserId) &&
+                             !string.Equals(holderUserId, "None", StringComparison.OrdinalIgnoreCase);
+
+            IEnumerable<string> knownUsers = (activeUserIds ?? Enumerable.Empty<string>())
+                .Concat(queue)
+                .Concat(hasHolder ? new[] { holderUserId } : Array.Empty<string>())
+                .Where(x => !string.IsNullOrWhiteSpace(x))
+                .Distinct();
+            Initialize(instrumentId, knownUsers);
+
+            EventHistory = new QueueEventHistory(maxHistoryEntries);
+            foreach (string entry in replicatedHistory ?? Enumerable.Empty<string>())
+                EventHistory.AddFormatted(entry);
+
+            InstrumentStateModel instrument = QueueManager.GetInstrumentState(instrumentId);
+            if (hasHolder)
+                instrument.AssignHolder(holderUserId);
+            foreach (string queuedUserId in queue)
+                instrument.EnqueueUser(queuedUserId);
+
+            AddHistory($"Queue authority restored from replicated state: holder={(hasHolder ? holderUserId : "None")} queue={queue.Count}");
+        }
+
         public void EnsureUserRegistered(string userId)
         {
             if (QueueManager == null || string.IsNullOrWhiteSpace(userId))
@@ -95,18 +131,35 @@ namespace Thesis.Orchestration.Core
                     removedUsers.Add(knownUserId);
             }
 
+            // Departures are recorded like any other queue decision (queue_transitions, telemetry,
+            // usage timing). Previously they changed the queue without an analytics record.
             foreach (string removedUserId in removedUsers)
             {
                 registeredUserIds.Remove(removedUserId);
                 pendingRequests.Remove(removedUserId);
+                AddHistory($"Participant left: {removedUserId}");
 
+                string holderBefore = GetCurrentHolder(instrumentId);
                 QueueDecision removeDecision = QueueManager.RemoveQueuedUser(removedUserId, instrumentId);
                 if (removeDecision != null && removeDecision.Type == QueueDecisionType.RemovedFromQueue)
+                {
                     AddHistory($"Removed disconnected user from queue: {removedUserId}");
+                    RecordDecisionAnalytics($"ParticipantLeft({removedUserId})", removeDecision, instrumentId,
+                        holderBefore, GetCurrentHolder(instrumentId), BuildQueueSnapshot(instrumentId));
+                }
 
                 InstrumentStateModel instrument = QueueManager.GetInstrumentState(instrumentId);
                 if (instrument != null && instrument.CurrentHolderUserId == removedUserId)
-                    releaseHolderFunc?.Invoke(removedUserId);
+                {
+                    QueueDecision releaseDecision = releaseHolderFunc?.Invoke(removedUserId);
+                    // ReleaseAccess registers users on demand; the departed holder must stay unregistered.
+                    registeredUserIds.Remove(removedUserId);
+                    if (releaseDecision != null)
+                    {
+                        RecordDecisionAnalytics($"HolderLeft({removedUserId})", releaseDecision, instrumentId,
+                            removedUserId, GetCurrentHolder(instrumentId), BuildQueueSnapshot(instrumentId));
+                    }
+                }
             }
         }
 
@@ -142,6 +195,12 @@ namespace Thesis.Orchestration.Core
         {
             InstrumentStateModel instrumentState = GetInstrumentState(instrumentId);
             return instrumentState?.CurrentHolderUserId ?? "None";
+        }
+
+        private List<string> BuildQueueSnapshot(string instrumentId)
+        {
+            InstrumentStateModel instrumentState = GetInstrumentState(instrumentId);
+            return instrumentState != null ? instrumentState.WaitingQueue.ToList() : new List<string>();
         }
 
         public string BuildJoinedQueue(string instrumentId)

@@ -15,6 +15,8 @@ namespace Thesis.Orchestration.Backends.FishNet
     {
         public static SessionOrchestratorFishNet Instance { get; private set; }
 
+        private bool playerCacheRefreshPending;
+
         [Header("FishNet Settings")]
         [SerializeField] private NetworkManager networkManager;
         [SerializeField] private Tugboat tugboat;
@@ -38,13 +40,22 @@ namespace Thesis.Orchestration.Backends.FishNet
         private bool localSessionStarted;
         private bool hasAutoConnectAttempted;
         private bool intentionalShutdownInProgress;
+        private bool initializationFailureReported;
         private string currentSessionName = "None";
         private SessionQueueRuntimeFishNet spawnedQueueRuntime;
 
         public NetworkManager NetworkManager => networkManager;
-        public bool IsConnectedToMasterServer => transportPrepared || (networkManager != null && (networkManager.IsClientStarted || networkManager.IsServerStarted));
-        public bool IsInRoom => networkManager != null && networkManager.IsClientStarted;
-        public bool IsMasterClient => networkManager != null && networkManager.IsServerStarted && networkManager.IsClientStarted;
+        private bool IsNetworkManagerInitialized =>
+            networkManager != null &&
+            networkManager.Initialized &&
+            networkManager.ClientManager != null &&
+            networkManager.ServerManager != null;
+
+        public bool IsConnectedToMasterServer => transportPrepared ||
+                                                 (IsNetworkManagerInitialized &&
+                                                  (networkManager.IsClientStarted || networkManager.IsServerStarted));
+        public bool IsInRoom => IsNetworkManagerInitialized && networkManager.IsClientStarted;
+        public bool IsMasterClient => IsNetworkManagerInitialized && networkManager.IsServerStarted && networkManager.IsClientStarted;
 
         public bool SessionStarted
         {
@@ -102,8 +113,14 @@ namespace Thesis.Orchestration.Backends.FishNet
         {
             ResolveReferences();
             TryBindCallbacks();
+            if (playerCacheRefreshPending)
+            {
+                playerCacheRefreshPending = false;
+                RefreshPlayerCache();
+            }
             TryMergeLifecycleLocalPlaceholder();
             RegisterQueueRuntimePrefabIfNeeded();
+            ReactivateClientSpawnedObjectsDeactivatedAtStart();
 
             bool started = SessionStarted;
             if (started == localSessionStarted)
@@ -120,7 +137,7 @@ namespace Thesis.Orchestration.Backends.FishNet
 
         private void OnDestroy()
         {
-            if (networkManager != null && networkManager.IsServerStarted)
+            if (IsNetworkManagerInitialized && networkManager.IsServerStarted)
                 SessionQueueRuntimeFishNet.Instance?.TryForceReleaseCurrentHolderForFinalization("Runtime cleanup");
             UnbindCallbacks();
 
@@ -137,6 +154,7 @@ namespace Thesis.Orchestration.Backends.FishNet
 
             transportPrepared = true;
             cachedSessions.Clear();
+            ConfiguredSharedObjectSpawnerFishNet.Instance?.RegisterConfiguredPrefabsIfNeeded();
             NetworkAvatarSpawnerFishNet.Instance?.RegisterSharedAvatarPrefabIfNeeded();
             RegisterQueueRuntimePrefabIfNeeded();
 
@@ -170,6 +188,7 @@ namespace Thesis.Orchestration.Backends.FishNet
             tugboat.SetPort(port);
             tugboat.SetMaximumClients(maxPlayersPerSession);
             tugboat.SetClientAddress(connectAddress);
+            ConfiguredSharedObjectSpawnerFishNet.Instance?.RegisterConfiguredPrefabsIfNeeded();
             NetworkAvatarSpawnerFishNet.Instance?.RegisterSharedAvatarPrefabIfNeeded();
             RegisterQueueRuntimePrefabIfNeeded();
 
@@ -193,6 +212,7 @@ namespace Thesis.Orchestration.Backends.FishNet
             currentSessionName = sessionName;
             cachedSessions.Clear();
             RefreshPlayerCache();
+            ConfiguredSharedObjectSpawnerFishNet.Instance?.EnsureServerObjectsSpawned();
             EnsureQueueRuntimeSpawned();
             TryMergeLifecycleLocalPlaceholder();
 
@@ -224,6 +244,7 @@ namespace Thesis.Orchestration.Backends.FishNet
             ushort port = SessionNameToPort(sessionName);
             tugboat.SetClientAddress(connectAddress);
             tugboat.SetPort(port);
+            ConfiguredSharedObjectSpawnerFishNet.Instance?.RegisterConfiguredPrefabsIfNeeded();
             NetworkAvatarSpawnerFishNet.Instance?.RegisterSharedAvatarPrefabIfNeeded();
             RegisterQueueRuntimePrefabIfNeeded();
 
@@ -258,6 +279,8 @@ namespace Thesis.Orchestration.Backends.FishNet
                 SessionQueueRuntimeFishNet.Instance?.TryForceReleaseCurrentHolderForFinalization("Session leave");
             TLog("LeaveRoomRequested", GetLocalUserId(), CurrentRoomName, "Requested to leave FishNet session.");
             intentionalShutdownInProgress = true;
+
+            ConfiguredSharedObjectSpawnerFishNet.Instance?.DespawnServerObjects();
 
             if (networkManager.IsServerStarted && spawnedQueueRuntime != null && spawnedQueueRuntime.IsSpawned)
             {
@@ -300,11 +323,6 @@ namespace Thesis.Orchestration.Backends.FishNet
             NetworkAvatarSpawnerFishNet.Instance?.EnsureSpawnForConnectedClients();
         }
 
-        public bool SessionExists(string roomName)
-        {
-            return false;
-        }
-
         public void ConfigureRuntime(NetworkManager manager, Tugboat transport, SessionQueueRuntimeFishNet runtimeTemplate)
         {
             networkManager = manager;
@@ -344,7 +362,7 @@ namespace Thesis.Orchestration.Backends.FishNet
 
         public int GetMasterClientId()
         {
-            if (networkManager != null &&
+            if (IsNetworkManagerInitialized &&
                 networkManager.IsServerStarted &&
                 networkManager.IsClientStarted &&
                 networkManager.ClientManager != null &&
@@ -356,7 +374,7 @@ namespace Thesis.Orchestration.Backends.FishNet
             if (cachedPlayers.Count > 0)
                 return cachedPlayers[0];
 
-            if (networkManager != null &&
+            if (IsNetworkManagerInitialized &&
                 networkManager.IsClientStarted &&
                 networkManager.ClientManager != null &&
                 networkManager.ClientManager.Connection.IsValid)
@@ -374,7 +392,7 @@ namespace Thesis.Orchestration.Backends.FishNet
 
         public string GetLocalUserId()
         {
-            if (networkManager != null &&
+            if (IsNetworkManagerInitialized &&
                 networkManager.IsClientStarted &&
                 networkManager.ClientManager != null &&
                 networkManager.ClientManager.Connection.IsValid)
@@ -416,16 +434,37 @@ namespace Thesis.Orchestration.Backends.FishNet
 
             if (networkManager == null || tugboat == null)
             {
-                RaiseFailure("SessionOrchestratorFishNet is missing NetworkManager or Tugboat transport.");
+                ReportInitializationFailureOnce("SessionOrchestratorFishNet is missing NetworkManager or Tugboat transport.");
                 return false;
             }
 
+            if (!networkManager.Initialized ||
+                networkManager.ClientManager == null ||
+                networkManager.ServerManager == null ||
+                networkManager.TransportManager == null ||
+                networkManager.SpawnablePrefabs == null)
+            {
+                ReportInitializationFailureOnce(
+                    "FishNet NetworkManager did not initialize. Re-run showcase authoring so its SpawnablePrefabs reference is repaired.");
+                return false;
+            }
+
+            initializationFailureReported = false;
             return true;
+        }
+
+        private void ReportInitializationFailureOnce(string message)
+        {
+            if (initializationFailureReported)
+                return;
+
+            initializationFailureReported = true;
+            RaiseFailure(message);
         }
 
         private void TryBindCallbacks()
         {
-            if (callbacksBound || networkManager == null)
+            if (callbacksBound || !IsNetworkManagerInitialized)
                 return;
 
             networkManager.ClientManager.OnClientConnectionState += HandleClientConnectionState;
@@ -437,7 +476,7 @@ namespace Thesis.Orchestration.Backends.FishNet
 
         private void UnbindCallbacks()
         {
-            if (!callbacksBound || networkManager == null)
+            if (!callbacksBound || !IsNetworkManagerInitialized)
                 return;
 
             networkManager.ClientManager.OnClientConnectionState -= HandleClientConnectionState;
@@ -490,21 +529,54 @@ namespace Thesis.Orchestration.Backends.FishNet
             ResetLocalState(notifyObservers: true);
         }
 
+        // When a remote connection stops, FishNet still lists it in the Clients dictionaries while the
+        // event runs. Refreshing only then kept the departed participant in the player list, so the queue
+        // never processed the departure. Exclude the stopping connection now and refresh again next frame.
         private void HandleServerRemoteConnectionState(NetworkConnection connection, RemoteConnectionStateArgs args)
         {
-            RefreshPlayerCache();
+            RefreshPlayerCache(args.ConnectionState == RemoteConnectionState.Stopped ? args.ConnectionId : (int?)null);
+            playerCacheRefreshPending = true;
+        }
+
+        // FishNet 4.6.22 NetworkObject.Start() deactivates an object when the client is not yet reported as
+        // started+authenticated. Objects in the initial spawn batch of a late-joining client can reach Start()
+        // in that window although they are already spawned and client-initialized, leaving the replica inactive
+        // (its behaviours never run). Observed in the L3 LateJoin lifecycle case; the server never despawned it.
+        private void ReactivateClientSpawnedObjectsDeactivatedAtStart()
+        {
+            if (!IsNetworkManagerInitialized || networkManager.IsServerStarted || !networkManager.IsClientStarted)
+                return;
+
+            foreach (NetworkObject spawned in networkManager.ClientManager.Objects.Spawned.Values)
+            {
+                if (spawned == null || spawned.gameObject.activeSelf ||
+                    !spawned.IsClientInitialized || !spawned.IsSpawned || spawned.IsNested)
+                {
+                    continue;
+                }
+
+                spawned.gameObject.SetActive(true);
+                Debug.Log($"[SessionOrchestratorFishNet] Reactivated client-spawned object '{spawned.name}' " +
+                          $"(objectId={spawned.ObjectId}) that FishNet deactivated at Start before the client was reported started.");
+                TelemetryLoggerCore.Instance?.LogEvent(
+                    "FishNetSpawnedObjectReactivated",
+                    GetLocalUserId(),
+                    spawned.name,
+                    $"objectId={spawned.ObjectId}; deactivated by NetworkObject.Start while client not yet reported started.");
+            }
         }
 
         private void HandleClientRemoteConnectionState(RemoteConnectionStateArgs args)
         {
-            RefreshPlayerCache();
+            RefreshPlayerCache(args.ConnectionState == RemoteConnectionState.Stopped ? args.ConnectionId : (int?)null);
+            playerCacheRefreshPending = true;
         }
 
-        private void RefreshPlayerCache()
+        private void RefreshPlayerCache(int? stoppingConnectionId = null)
         {
             HashSet<int> playerIds = new HashSet<int>();
 
-            if (networkManager != null)
+            if (IsNetworkManagerInitialized)
             {
                 if (networkManager.IsClientStarted &&
                     networkManager.ClientManager != null &&
@@ -525,6 +597,9 @@ namespace Thesis.Orchestration.Backends.FishNet
                         playerIds.Add(clientId);
                 }
             }
+
+            if (stoppingConnectionId.HasValue)
+                playerIds.Remove(stoppingConnectionId.Value);
 
             cachedPlayers.Clear();
             cachedPlayers.AddRange(playerIds.OrderBy(id => id));

@@ -1,0 +1,19 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <!-- FCFS queue and shared queue-runtime logic regression (W04/W11): the package QueueManagerCore and the
+       framework QueueRuntimeSharedLogic actually materialized into the runtime, with telemetry stand-ins. -->
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net8.0</TargetFramework>
+    <Nullable>disable</Nullable>
+    <EnableDefaultCompileItems>false</EnableDefaultCompileItems>
+  </PropertyGroup>
+  <ItemGroup>
+    <Compile Include="Program.cs" />
+    <Compile Include="../../repo/src/packages/com.vlab.orchestrator.core/Runtime/Core/QueueManagerCore.cs" Link="Core/QueueManagerCore.cs" />
+    <Compile Include="../../repo/src/packages/com.vlab.orchestrator.core/Runtime/Core/InstrumentStateModel.cs" Link="Core/InstrumentStateModel.cs" />
+    <Compile Include="../../repo/src/packages/com.vlab.orchestrator.core/Runtime/Core/UserStateModel.cs" Link="Core/UserStateModel.cs" />
+    <Compile Include="../../repo/src/packages/com.vlab.orchestrator.core/Runtime/Policies/PolicyEngineCore.cs" Link="Core/PolicyEngineCore.cs" />
+    <Compile Include="../../repo/src/framework/Core/QueueRuntimeSharedLogic.cs" Link="Core/QueueRuntimeSharedLogic.cs" />
+    <Compile Include="../../repo/src/framework/Utilities/QueueEventHistory.cs" Link="Core/QueueEventHistory.cs" />
+  </ItemGroup>
+</Project>

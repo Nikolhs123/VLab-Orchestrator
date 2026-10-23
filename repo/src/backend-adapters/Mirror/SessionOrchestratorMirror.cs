@@ -327,11 +327,6 @@ namespace Thesis.Orchestration.Backends.Mirror
             NetworkAvatarSpawnerMirror.Instance?.EnsureSpawnForConnectedClients();
         }
 
-        public bool SessionExists(string roomName)
-        {
-            return false;
-        }
-
         public void ConfigureRuntime(MirrorNetworkManager manager, KcpTransport transport, SessionQueueRuntimeMirror runtimeTemplate)
         {
             networkManager = manager;
@@ -792,6 +787,11 @@ namespace Thesis.Orchestration.Backends.Mirror
             lastKnownClientConnected = false;
             localAssignedClientId = UnassignedClientId;
             observerSynchronizedConnectionIds.Clear();
+
+            // Stopping the Mirror client clears its message and spawn handlers. Without resetting the
+            // registration flags, a rejoin in the same process received no client id, player list or
+            // queue runtime spawn. Update and the next join register them again.
+            UnregisterClientHandlers();
 
             if (!notifyObservers)
                 return;

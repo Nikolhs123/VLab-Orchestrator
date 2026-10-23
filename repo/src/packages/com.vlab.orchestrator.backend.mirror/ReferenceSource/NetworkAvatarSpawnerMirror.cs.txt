@@ -134,7 +134,6 @@ namespace Thesis.Orchestration.Backends.Mirror
                 cachedAvatar != null &&
                 cachedAvatar.netId != 0)
             {
-                Log($"Spawn skipped for Client_{clientId} because a cached avatar is still spawned.");
                 return;
             }
 

@@ -78,9 +78,20 @@ namespace Thesis.Orchestration.Editor
                 {
                     bool changed = false;
 
-                    if (root.GetComponent<Fusion.NetworkObject>() == null)
+                    Fusion.NetworkObject networkObject = root.GetComponent<Fusion.NetworkObject>();
+                    if (networkObject == null)
                     {
-                        root.AddComponent<Fusion.NetworkObject>();
+                        networkObject = root.AddComponent<Fusion.NetworkObject>();
+                        changed = true;
+                    }
+
+                    // Shared mode: the queue runtime must survive the departure of its state authority and follow
+                    // the master client (queue-authority migration), instead of being destroyed with the leaver.
+                    NetworkObjectFlags flags = (networkObject.Flags | NetworkObjectFlags.MasterClientObject) &
+                                               ~NetworkObjectFlags.DestroyWhenStateAuthorityLeaves;
+                    if (networkObject.Flags != flags)
+                    {
+                        networkObject.Flags = flags;
                         changed = true;
                     }
 

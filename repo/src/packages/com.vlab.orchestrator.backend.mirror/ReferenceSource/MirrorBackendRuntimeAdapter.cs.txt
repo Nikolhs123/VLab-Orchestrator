@@ -8,10 +8,25 @@ using UnityEngine;
 
 namespace Thesis.Orchestration.Backends.Mirror
 {
-    public class MirrorBackendRuntimeAdapter : MonoBehaviour, IOrchestrationBackendRuntime, IOrchestrationSessionView, IOrchestrationQueueView
+    public class MirrorBackendRuntimeAdapter : MonoBehaviour, IOrchestrationBackendRuntime, IOrchestrationSessionView, IOrchestrationQueueView, IExecutionEnvironmentDescriptor
     {
         [SerializeField] private SessionOrchestratorMirror session;
         [SerializeField] private SessionQueueRuntimeMirror queue;
+
+        public void DescribeExecutionEnvironment(IDictionary<string, string> into)
+        {
+            global::Mirror.NetworkManager manager = global::Mirror.NetworkManager.singleton;
+            into["sdk"] = "Mirror";
+            into["sdk_assembly_version"] = typeof(global::Mirror.NetworkIdentity).Assembly.GetName().Version.ToString();
+            into["room_discovery"] = "unsupported (direct connect)";
+            into["transport"] = global::Mirror.Transport.active != null ? global::Mirror.Transport.active.GetType().FullName : "None";
+            into["send_rate_hz"] = manager != null ? manager.sendRate.ToString() : "unavailable";
+            into["server_active"] = global::Mirror.NetworkServer.active.ToString();
+            into["client_active"] = global::Mirror.NetworkClient.active.ToString();
+            into["network_address"] = manager != null ? manager.networkAddress : "unavailable";
+            into["topology"] = global::Mirror.NetworkServer.active && global::Mirror.NetworkClient.active ? "Host" :
+                global::Mirror.NetworkServer.active ? "Server" : global::Mirror.NetworkClient.active ? "Client" : "Offline";
+        }
 
         public OrchestrationBackendType BackendType => OrchestrationBackendType.Mirror;
         public IOrchestrationSessionView SessionView => this;
@@ -54,6 +69,7 @@ namespace Thesis.Orchestration.Backends.Mirror
 
         public bool QueueRuntimeActive => ResolveQueue() != null && queue.QueueRuntimeActive;
         public string CurrentInstrumentId => ResolveQueue() != null ? queue.CurrentInstrumentId : string.Empty;
+        public string SessionRunId => ResolveQueue() != null ? queue.SessionRunId : string.Empty;
         public string CurrentHolderUserId => ResolveQueue() != null ? queue.CurrentHolderUserId : "None";
         public IReadOnlyList<string> CurrentQueueSnapshot => ResolveQueue() != null ? queue.CurrentQueueSnapshot : Array.Empty<string>();
 
@@ -109,7 +125,8 @@ namespace Thesis.Orchestration.Backends.Mirror
         public void JoinRoom(string roomName) => ResolveSession()?.JoinRoom(roomName);
         public void LeaveRoom() => ResolveSession()?.LeaveRoom();
         public void BeginSession() => ResolveSession()?.BeginSession();
-        public bool RoomExists(string roomName) => false;
+        // Direct connect: no room discovery; the room name is mapped to a port and a join attempts the connection.
+        public RoomLookupResult LookupRoom(string roomName) => RoomLookupResult.Unsupported;
 
         public void RequestAccessForLocalPlayer() => ResolveQueue()?.RequestAccessForLocalPlayer();
         public void ReleaseAccessForLocalPlayer() => ResolveQueue()?.ReleaseAccessForLocalPlayer();
@@ -191,7 +208,11 @@ namespace Thesis.Orchestration.Backends.Mirror
         private void HandleRoomBrowserUpdated(List<string> _) => RoomsChanged?.Invoke();
         private void HandlePlayerListUpdated(List<int> _) => PlayersChanged?.Invoke();
         private void HandleStatusMessage(string message) => StatusMessage?.Invoke(message);
-        private void HandleQueueRuntimeUpdated() => RuntimeStateChanged?.Invoke();
+        private void HandleQueueRuntimeUpdated()
+        {
+            EvaluationRunContext.Instance?.ObserveSessionRunId(SessionRunId);
+            RuntimeStateChanged?.Invoke();
+        }
 
         private string ResolvePlayerDisplayName(string userId)
         {

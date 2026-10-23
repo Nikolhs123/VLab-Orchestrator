@@ -8,10 +8,30 @@ using UnityEngine;
 
 namespace Thesis.Orchestration.Backends.FishNet
 {
-    public class FishNetBackendRuntimeAdapter : MonoBehaviour, IOrchestrationBackendRuntime, IOrchestrationSessionView, IOrchestrationQueueView
+    public class FishNetBackendRuntimeAdapter : MonoBehaviour, IOrchestrationBackendRuntime, IOrchestrationSessionView, IOrchestrationQueueView, IExecutionEnvironmentDescriptor
     {
         [SerializeField] private SessionOrchestratorFishNet session;
         [SerializeField] private SessionQueueRuntimeFishNet queue;
+
+        public void DescribeExecutionEnvironment(IDictionary<string, string> into)
+        {
+            global::FishNet.Managing.NetworkManager manager = global::FishNet.InstanceFinder.NetworkManager;
+            into["sdk"] = "FishNet";
+            into["sdk_version"] = global::FishNet.Managing.NetworkManager.FISHNET_VERSION;
+            into["room_discovery"] = "unsupported (direct connect)";
+            if (manager == null)
+            {
+                into["network_manager"] = "unavailable";
+                return;
+            }
+
+            into["tick_rate_hz"] = manager.TimeManager != null ? manager.TimeManager.TickRate.ToString() : "unavailable";
+            into["transport"] = manager.TransportManager != null && manager.TransportManager.Transport != null
+                ? manager.TransportManager.Transport.GetType().FullName
+                : "unavailable";
+            into["topology"] = manager.IsServerStarted && manager.IsClientStarted ? "Host" :
+                manager.IsServerStarted ? "Server" : manager.IsClientStarted ? "Client" : "Offline";
+        }
 
         public OrchestrationBackendType BackendType => OrchestrationBackendType.FishNet;
         public IOrchestrationSessionView SessionView => this;
@@ -77,6 +97,7 @@ namespace Thesis.Orchestration.Backends.FishNet
 
         public bool QueueRuntimeActive => ResolveQueue() != null && queue.QueueRuntimeActive;
         public string CurrentInstrumentId => ResolveQueue() != null ? queue.CurrentInstrumentId : string.Empty;
+        public string SessionRunId => ResolveQueue() != null ? queue.SessionRunId : string.Empty;
         public string CurrentHolderUserId => ResolveQueue() != null ? queue.CurrentHolderUserId : "None";
         public IReadOnlyList<string> CurrentQueueSnapshot => ResolveQueue() != null ? queue.CurrentQueueSnapshot : Array.Empty<string>();
 
@@ -132,7 +153,8 @@ namespace Thesis.Orchestration.Backends.FishNet
         public void JoinRoom(string roomName) => ResolveSession()?.JoinRoom(roomName);
         public void LeaveRoom() => ResolveSession()?.LeaveRoom();
         public void BeginSession() => ResolveSession()?.BeginSession();
-        public bool RoomExists(string roomName) => false;
+        // Direct connect: no room discovery; the room name is mapped to a port and a join attempts the connection.
+        public RoomLookupResult LookupRoom(string roomName) => RoomLookupResult.Unsupported;
 
         public void RequestAccessForLocalPlayer() => ResolveQueue()?.RequestAccessForLocalPlayer();
         public void ReleaseAccessForLocalPlayer() => ResolveQueue()?.ReleaseAccessForLocalPlayer();
@@ -214,7 +236,11 @@ namespace Thesis.Orchestration.Backends.FishNet
         private void HandleRoomBrowserUpdated(List<string> _) => RoomsChanged?.Invoke();
         private void HandlePlayerListUpdated(List<int> _) => PlayersChanged?.Invoke();
         private void HandleStatusMessage(string message) => StatusMessage?.Invoke(message);
-        private void HandleQueueRuntimeUpdated() => RuntimeStateChanged?.Invoke();
+        private void HandleQueueRuntimeUpdated()
+        {
+            EvaluationRunContext.Instance?.ObserveSessionRunId(SessionRunId);
+            RuntimeStateChanged?.Invoke();
+        }
 
         private string ResolvePlayerDisplayName(string userId)
         {

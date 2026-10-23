@@ -10,10 +10,31 @@ using UnityEngine;
 
 namespace Thesis.Orchestration.Backends.PUN2
 {
-    public class PUN2BackendRuntimeAdapter : MonoBehaviour, IOrchestrationBackendRuntime, IOrchestrationSessionView, IOrchestrationQueueView
+    public class PUN2BackendRuntimeAdapter : MonoBehaviour, IOrchestrationBackendRuntime, IOrchestrationSessionView, IOrchestrationQueueView, IExecutionEnvironmentDescriptor
     {
         [SerializeField] private SessionOrchestratorPUN2 session;
         [SerializeField] private SessionQueueRuntimePUN2 queue;
+
+        public void DescribeExecutionEnvironment(IDictionary<string, string> into)
+        {
+            into["sdk"] = "Photon PUN 2";
+            into["sdk_version"] = PhotonNetwork.PunVersion;
+            into["room_discovery"] = "lobby room list";
+            into["cloud_region"] = string.IsNullOrEmpty(PhotonNetwork.CloudRegion) ? "unavailable" : PhotonNetwork.CloudRegion;
+            string fixedRegion = PhotonNetwork.PhotonServerSettings != null
+                ? PhotonNetwork.PhotonServerSettings.AppSettings.FixedRegion
+                : null;
+            into["fixed_region_setting"] = PhotonNetwork.PhotonServerSettings == null
+                ? "unavailable"
+                : string.IsNullOrEmpty(fixedRegion) ? "none (best region selected at connect)" : fixedRegion;
+            into["send_rate_hz"] = PhotonNetwork.SendRate.ToString();
+            into["serialization_rate_hz"] = PhotonNetwork.SerializationRate.ToString();
+            into["transport_protocol"] = PhotonNetwork.NetworkingClient != null
+                ? PhotonNetwork.NetworkingClient.LoadBalancingPeer.TransportProtocol.ToString()
+                : "unavailable";
+            into["server_address"] = PhotonNetwork.ServerAddress ?? "";
+            into["topology"] = PhotonNetwork.IsMasterClient ? "MasterClient" : PhotonNetwork.InRoom ? "Client" : "Offline";
+        }
 
         public OrchestrationBackendType BackendType => OrchestrationBackendType.PUN2;
         public IOrchestrationSessionView SessionView => this;
@@ -56,6 +77,7 @@ namespace Thesis.Orchestration.Backends.PUN2
 
         public bool QueueRuntimeActive => ResolveQueue() != null && queue.QueueRuntimeActive;
         public string CurrentInstrumentId => ResolveQueue() != null ? queue.CurrentInstrumentId : string.Empty;
+        public string SessionRunId => ResolveQueue() != null ? queue.SessionRunId : string.Empty;
         public string CurrentHolderUserId => ResolveQueue() != null ? queue.CurrentHolderUserId : "None";
         public IReadOnlyList<string> CurrentQueueSnapshot => ResolveQueue() != null ? queue.CurrentQueueSnapshot : Array.Empty<string>();
 
@@ -166,7 +188,14 @@ namespace Thesis.Orchestration.Backends.PUN2
         public void JoinRoom(string roomName) => ResolveSession()?.JoinRoom(roomName);
         public void LeaveRoom() => ResolveSession()?.LeaveRoom();
         public void BeginSession() => ResolveSession()?.BeginSession();
-        public bool RoomExists(string roomName) => ResolveSession() != null && session.RoomExists(roomName);
+        // The room list is only maintained while in the lobby; outside it the answer is not known.
+        public RoomLookupResult LookupRoom(string roomName)
+        {
+            if (ResolveSession() == null || !PhotonNetwork.InLobby)
+                return RoomLookupResult.Unavailable;
+
+            return session.RoomExists(roomName) ? RoomLookupResult.Exists : RoomLookupResult.NotFound;
+        }
 
         public void RequestAccessForLocalPlayer() => ResolveQueue()?.RequestAccessForLocalPlayer();
         public void ReleaseAccessForLocalPlayer() => ResolveQueue()?.ReleaseAccessForLocalPlayer();
@@ -179,6 +208,10 @@ namespace Thesis.Orchestration.Backends.PUN2
         private void HandleRoomListUpdated(List<RoomInfo> _) => RoomsChanged?.Invoke();
         private void HandlePlayerListUpdated(List<Player> _) => PlayersChanged?.Invoke();
         private void HandleStatusMessage(string msg) => StatusMessage?.Invoke(msg);
-        private void HandleQueueRuntimeUpdated() => RuntimeStateChanged?.Invoke();
+        private void HandleQueueRuntimeUpdated()
+        {
+            EvaluationRunContext.Instance?.ObserveSessionRunId(SessionRunId);
+            RuntimeStateChanged?.Invoke();
+        }
     }
 }

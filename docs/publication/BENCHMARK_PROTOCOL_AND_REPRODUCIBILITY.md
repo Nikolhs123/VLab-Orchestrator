@@ -2,7 +2,11 @@
 
 ## Implemented Protocol
 
-The current benchmark protocol version is 1.5. The same scenario runner,
+The current revision source uses protocol version 1.6, with revised authority
+measurement instrumentation. Its Unity/SDK integration validation and revised
+measurement campaign are pending. Published historical results remain under
+their original protocol versions. See [authority measurement semantics](AUTHORITY_MEASUREMENT_SEMANTICS.md).
+The same scenario runner,
 assertion model, and export pipeline operate above all five networking backends.
 
 | ID | Purpose | Mode | Participants | Cycles | Hold | Prequeue | Controlled child rotation |
@@ -63,11 +67,58 @@ The export pipeline can produce:
 - Optional AI decision files
 - A completion manifest written after successful publication
 
+Revision protocol 1.6 adds, in every export:
+
+- `execution_manifest.csv` (key,value): build provenance written before the
+  player build (SHA-256 of the canonical framework and adapter source and of
+  the generated runtime compiled into the player, line-ending normalized; SDK
+  versions read from the installed SDK files; selected backend, protocol and
+  scenario; git commit when git is available, otherwise `unavailable`), the
+  executing environment (Unity version, platform, batch mode, frame-rate
+  settings, command line, monotonic clock frequency), all protocol/preset
+  values in force, and backend settings read from the SDK at run time
+  (topology, transport, tick/send/serialization rates, cloud region and fixed
+  region setting for Photon). Unreadable values are written as `unavailable`.
+- `participant_identity.csv`: observer participant, export role
+  (Coordinator/Participant), session (room) name, machine and process.
+- `native_authority_observations.csv` and `transform_observations.csv`
+  (per-participant SDK authority state and per-phase expected/actual
+  orientation), plus the authority measurement lifecycle and summary files.
+
+Each non-coordinator participant also exports its own records under
+`<root>/ParticipantExports/<backend>/<scenario>/Run_*_<participant>`; analyzers
+that read `<root>/<backend>/<scenario>` are unaffected. Records of the two
+participants are joined by session name, cycle and phase index; their clocks
+are process-local and are not subtracted.
+
+Two observations from automated headless two-process checks matter for
+execution design: Mirror's NetworkManager imposes its own frame rate in headless
+mode (60 FPS observed despite a 120 FPS request), so headless frame rate can
+depend on the backend; and each player build should be followed by a smoke run
+before data collection (one sequence of builds produced only invalid Fusion
+runs, all correctly flagged INVALID by the runner).
+
 Exports are first staged in a short `.staging` path and a run folder is
 published only after all required files have been written. In the Editor, the
 root is `<UnityProject>/EvaluationExports`. In a standalone player, the root is
 `<executable-folder>/EvaluationExports`. The same root is used by protocol
 coverage, backend comparison, ranked-report, and "Open Exports" tooling.
+
+### Command-Line Two-Participant Run
+
+With the canonical preset armed in the project configuration, a player can be
+driven without manual clicks:
+
+```text
+VLabOrchestratorShowcase.exe -vlabSession host   -vlabRoom <name> -vlabQuitWhenDone [-vlabTargetFrameRate 120]
+VLabOrchestratorShowcase.exe -vlabSession client -vlabRoom <name> -vlabQuitWhenDone [-vlabTargetFrameRate 120]
+```
+
+The host creates the session, the client joins, the scenario runs and exports,
+and both processes quit (`-vlabTimeoutSeconds <s>` bounds a stalled run). Backend
+and scenario can be selected in batch mode with
+`VLabOrchestrator.Editor.SoftwareXBatchCommands.SelectBackendAndScenario`
+(`-vlabBackend`, `-vlabScenario`).
 
 ## Pilot Coverage
 

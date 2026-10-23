@@ -18,6 +18,9 @@ namespace Thesis.Orchestration.SharedSync
         protected bool waitingForFirstInteractionAfterGrant = false;
         protected bool lastInteractionState = true;
 
+        // The gate's current decision (logical access and local native authority), for access-control probes.
+        public bool InteractionPermitted => lastInteractionState;
+
         protected virtual void BaseInitialize()
         {
             lastPosition = transform.position;

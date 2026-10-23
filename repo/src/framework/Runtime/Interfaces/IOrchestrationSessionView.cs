@@ -12,6 +12,17 @@ namespace Thesis.Orchestration.Runtime
         public bool IsMasterClient;
     }
 
+    // Result of asking a backend whether a named room exists. A boolean conflated "not found" with "this
+    // backend cannot answer": direct-connect adapters (Netcode, Mirror, FishNet) have no room discovery, the
+    // room name selects the address/port, and a join simply attempts the connection.
+    public enum RoomLookupResult
+    {
+        Exists,
+        NotFound,          // discovery is supported and the current list does not contain the room
+        Unavailable,       // discovery is supported but no list is available now (e.g. not in the lobby)
+        Unsupported        // the backend has no room discovery
+    }
+
     public interface IOrchestrationSessionView
     {
         bool IsConnectedToServer { get; }
@@ -39,6 +50,6 @@ namespace Thesis.Orchestration.Runtime
         void JoinRoom(string roomName);
         void LeaveRoom();
         void BeginSession();
-        bool RoomExists(string roomName);
+        RoomLookupResult LookupRoom(string roomName);
     }
 }

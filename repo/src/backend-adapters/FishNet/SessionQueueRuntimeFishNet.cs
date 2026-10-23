@@ -39,6 +39,7 @@ namespace Thesis.Orchestration.Backends.FishNet
         private bool queueRuntimeActive;
         private bool sessionStarted;
         private string currentInstrumentId = string.Empty;
+        private string sessionRunId = string.Empty;
         private string currentHolderUserId = "None";
         private readonly List<string> currentQueueSnapshot = new();
         private readonly List<string> replicatedHistorySnapshot = new();
@@ -66,6 +67,7 @@ namespace Thesis.Orchestration.Backends.FishNet
         public bool SessionStarted => sessionStarted;
         public bool QueueRuntimeActive => queueRuntimeActive;
         public string CurrentInstrumentId => currentInstrumentId;
+        public string SessionRunId => sessionRunId;
         public string CurrentHolderUserId => string.IsNullOrWhiteSpace(currentHolderUserId) ? "None" : currentHolderUserId;
         public List<string> CurrentQueueSnapshot => new(currentQueueSnapshot);
         public List<string> ReplicatedHistorySnapshot => new(replicatedHistorySnapshot);
@@ -255,19 +257,31 @@ namespace Thesis.Orchestration.Backends.FishNet
         [ServerRpc(RequireOwnership = false)]
         private void RequestBeginSessionServerRpc(string requestingUserId, NetworkConnection caller = null)
         {
-            HandleBeginSessionRequest(requestingUserId);
+            if (IsFromCaller(requestingUserId, caller, "BeginSession"))
+                HandleBeginSessionRequest(requestingUserId);
         }
 
         [ServerRpc(RequireOwnership = false)]
         private void RequestAccessServerRpc(string userId, NetworkConnection caller = null)
         {
-            HandleRequestAccess(userId);
+            if (IsFromCaller(userId, caller, "RequestAccess"))
+                HandleRequestAccess(userId);
         }
 
         [ServerRpc(RequireOwnership = false)]
         private void ReleaseAccessServerRpc(string userId, NetworkConnection caller = null)
         {
-            HandleReleaseAccess(userId);
+            if (IsFromCaller(userId, caller, "ReleaseAccess"))
+                HandleReleaseAccess(userId);
+        }
+
+        private bool IsFromCaller(string claimedUserId, NetworkConnection caller, string operation)
+        {
+            return QueueRequestIdentity.Accept(
+                claimedUserId,
+                caller != null && caller.IsValid ? ConvertClientToUserId(caller.ClientId) : null,
+                operation,
+                currentInstrumentId);
         }
 
         [ServerRpc(RequireOwnership = false)]
@@ -279,7 +293,8 @@ namespace Thesis.Orchestration.Backends.FishNet
         [ServerRpc(RequireOwnership = false)]
         private void HeartbeatServerRpc(string userId, NetworkConnection caller = null)
         {
-            HandleHeartbeat(userId);
+            if (IsFromCaller(userId, caller, "Heartbeat"))
+                HandleHeartbeat(userId);
         }
 
         [ServerRpc(RequireOwnership = false)]
@@ -307,6 +322,7 @@ namespace Thesis.Orchestration.Backends.FishNet
             bool runtimeActive,
             bool replicatedSessionStarted,
             string instrumentId,
+            string replicatedSessionRunId,
             string holderUserId,
             string joinedQueue,
             string joinedHistory,
@@ -317,6 +333,7 @@ namespace Thesis.Orchestration.Backends.FishNet
             queueRuntimeActive = runtimeActive;
             sessionStarted = replicatedSessionStarted;
             currentInstrumentId = instrumentId ?? string.Empty;
+            sessionRunId = replicatedSessionRunId ?? string.Empty;
             currentHolderUserId = string.IsNullOrWhiteSpace(holderUserId) ? "None" : holderUserId;
 
             currentQueueSnapshot.Clear();
@@ -504,6 +521,7 @@ namespace Thesis.Orchestration.Backends.FishNet
             }
 
             currentInstrumentId = instrumentDefinition.ObjectId;
+            sessionRunId = SessionRunIdentity.NewId();
             currentHolderUserId = "None";
 
             IEnumerable<string> userIds = GetActiveUserIds();
@@ -562,6 +580,7 @@ namespace Thesis.Orchestration.Backends.FishNet
                 queueRuntimeActive,
                 sessionStarted,
                 currentInstrumentId,
+                sessionRunId,
                 currentHolderUserId,
                 joinedQueue,
                 joinedHistory,
@@ -596,6 +615,7 @@ namespace Thesis.Orchestration.Backends.FishNet
             queueRuntimeActive = false;
             sessionStarted = false;
             currentInstrumentId = string.Empty;
+            sessionRunId = string.Empty;
             currentHolderUserId = "None";
             timeoutTimer = 0f;
             hasInitializedForCurrentSession = false;

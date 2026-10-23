@@ -17,6 +17,8 @@ namespace Thesis.Orchestration.Backends.Fusion
         [Header("Options")]
         [SerializeField] private bool controlCollidersToo = true;
         [SerializeField] private bool requestAuthorityAutomatically = true;
+        [Tooltip("Minimum seconds between automatic state-authority requests; permission is evaluated every frame.")]
+        [SerializeField] private float authorityRequestCooldownSeconds = 0.5f;
         [SerializeField] private bool allowInteractionWhenOffline = true;
 
         [Header("Automatic Heartbeat")]
@@ -38,6 +40,7 @@ namespace Thesis.Orchestration.Backends.Fusion
         [SerializeField] private bool verboseLogs = true;
 
         private Collider[] cachedColliders;
+        private float lastAuthorityRequestTime = -999f;
 
         private void Awake()
         {
@@ -94,8 +97,11 @@ namespace Thesis.Orchestration.Backends.Fusion
             if (networkObject.HasStateAuthority)
                 return true;
 
-            if (requestAuthorityAutomatically)
+            // Without a cooldown this issued one request per frame until authority arrived.
+            if (requestAuthorityAutomatically &&
+                Time.unscaledTime - lastAuthorityRequestTime >= authorityRequestCooldownSeconds)
             {
+                lastAuthorityRequestTime = Time.unscaledTime;
                 networkObject.RequestStateAuthority();
                 Log($"Requested state authority for child '{name}'.");
             }

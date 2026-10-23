@@ -1,4 +1,5 @@
 using System.Collections.Generic;
+using Thesis.Orchestration.SharedSync;
 using Thesis.Orchestration.Telemetry;
 using UnityEngine;
 using MirrorNetworkBehaviour = global::Mirror.NetworkBehaviour;
@@ -73,6 +74,7 @@ namespace Thesis.Orchestration.Backends.Mirror.StandaloneShared
         public override void OnStartClient()
         {
             base.OnStartClient();
+            SharedObjectSyncRegistry.ResolveOrCreate()?.DiscoverSceneObjects();
 
             if (isOwned)
                 SubmitStateIfChanged(force: true);

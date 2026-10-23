@@ -11,7 +11,7 @@ namespace VLabOrchestrator.Showcase.Tests
         {
             Assert.That(
                 OrchestrationProjectConfig.CanonicalBenchmarkProtocolVersion,
-                Is.EqualTo("1.4"));
+                Is.EqualTo("1.6"));
         }
 
         [TestCase(OrchestrationBenchmarkScenario.BaselineFcfs, 3, 10f, 1f, 15f, true, true, 1f, 6f, 60f, true)]

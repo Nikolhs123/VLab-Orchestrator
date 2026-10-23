@@ -1,5 +1,6 @@
 using System;
 using System.IO;
+using System.Linq;
 using Thesis.Orchestration.EditorTools;
 using UnityEngine;
 
@@ -31,6 +32,23 @@ namespace Thesis.Orchestration.Telemetry
         private DateTime runStartUtc;
 
         public string RunId => runId;
+        // Network session (room) name shared by all participants of a run; set by the scenario runner.
+        public string SessionName { get; set; } = "";
+        // Session run id replicated by the queue authority (Core.SessionRunIdentity); the cross-participant join
+        // key. Latched because the queue state can be gone by export time (e.g. after the coordinator left).
+        // If a run observes more than one session, all ids are kept in order, separated by '|'.
+        public string SessionRunId { get; private set; } = "";
+
+        public void ObserveSessionRunId(string sessionRunId)
+        {
+            if (string.IsNullOrWhiteSpace(sessionRunId))
+                return;
+
+            if (string.IsNullOrEmpty(SessionRunId))
+                SessionRunId = sessionRunId;
+            else if (!SessionRunId.Split('|').Contains(sessionRunId))
+                SessionRunId += "|" + sessionRunId;
+        }
         public string ScenarioId => scenarioId;
         public DateTime RunStartUtc => runStartUtc;
         public bool SameMachine => sameMachine;
@@ -82,6 +100,7 @@ namespace Thesis.Orchestration.Telemetry
         {
             runStartUtc = DateTime.UtcNow;
             runId = $"{BackendName}_{scenarioId}_{runStartUtc:yyyyMMdd_HHmmss_fff}";
+            SessionRunId = "";
             Log($"Started new evaluation run: {runId}");
         }
 

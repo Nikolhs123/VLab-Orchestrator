@@ -19,6 +19,7 @@ namespace Thesis.Orchestration.Backends.Netcode
     {
         private const int MaxSharedUserCardStatsLength = 4096;
         private const int MaxFixedString512SafeChars = 480;
+        private const float ConnectedPlayersRefreshIntervalSeconds = 0.5f;
         private const string JoinedEntrySeparator = "||";
 
         public static SessionQueueRuntimeNetcode Instance { get; private set; }
@@ -44,6 +45,8 @@ namespace Thesis.Orchestration.Backends.Netcode
         private string lastRenderedSignature = string.Empty;
         private string lastSharedUserCardStatsSignature = string.Empty;
         private string lastSubmittedLifecycleRowJson = string.Empty;
+        private float nextConnectedPlayersAuditTime;
+        private float nextConnectedPlayersRequestTime;
         private UserCardStatsSnapshot cachedSharedUserCardStats = new UserCardStatsSnapshot();
 
         private readonly NetworkVariable<bool> sessionStartedNetworked = new(
@@ -57,6 +60,11 @@ namespace Thesis.Orchestration.Backends.Netcode
             NetworkVariableWritePermission.Server);
 
         private readonly NetworkVariable<FixedString64Bytes> currentInstrumentIdNetworked = new(
+            default,
+            NetworkVariableReadPermission.Everyone,
+            NetworkVariableWritePermission.Server);
+
+        private readonly NetworkVariable<FixedString64Bytes> sessionRunIdNetworked = new(
             default,
             NetworkVariableReadPermission.Everyone,
             NetworkVariableWritePermission.Server);
@@ -89,6 +97,7 @@ namespace Thesis.Orchestration.Backends.Netcode
         public bool SessionStarted => IsSpawned && sessionStartedNetworked.Value;
         public bool QueueRuntimeActive => IsSpawned && queueRuntimeActiveNetworked.Value;
         public string CurrentInstrumentId => IsSpawned ? currentInstrumentIdNetworked.Value.ToString() : string.Empty;
+        public string SessionRunId => IsSpawned ? sessionRunIdNetworked.Value.ToString() : string.Empty;
         public string CurrentHolderUserId => NormalizeHolderId(IsSpawned ? currentHolderUserIdNetworked.Value.ToString() : string.Empty);
         public List<string> CurrentQueueSnapshot => IsSpawned ? SplitJoinedString(currentQueueJoinedNetworked.Value.ToString()) : new List<string>();
         public List<string> ReplicatedHistorySnapshot => IsSpawned ? SplitJoinedString(replicatedHistoryJoinedNetworked.Value.ToString()) : new List<string>();
@@ -120,7 +129,7 @@ namespace Thesis.Orchestration.Backends.Netcode
                 sessionOrchestrator = SessionOrchestratorNetcode.Instance;
 
             if (sharedRegistry == null)
-                sharedRegistry = SharedObjectSyncRegistry.Instance;
+                sharedRegistry = SharedObjectSyncRegistry.ResolveOrCreate();
 
             sharedLogic = new QueueRuntimeSharedLogic(maxHistoryEntries);
         }
@@ -138,10 +147,12 @@ namespace Thesis.Orchestration.Backends.Netcode
                 sessionOrchestrator = SessionOrchestratorNetcode.Instance;
 
             if (sharedRegistry == null)
-                sharedRegistry = SharedObjectSyncRegistry.Instance;
+                sharedRegistry = SharedObjectSyncRegistry.ResolveOrCreate();
 
             sharedLogic ??= new QueueRuntimeSharedLogic(maxHistoryEntries);
             timeoutTimer = 0f;
+            nextConnectedPlayersAuditTime = 0f;
+            nextConnectedPlayersRequestTime = 0f;
             lastRenderedSignature = string.Empty;
             lastSharedUserCardStatsSignature = string.Empty;
             TryBindEvents();
@@ -159,6 +170,8 @@ namespace Thesis.Orchestration.Backends.Netcode
 
             UnbindEvents();
             timeoutTimer = 0f;
+            nextConnectedPlayersAuditTime = 0f;
+            nextConnectedPlayersRequestTime = 0f;
             hasInitializedForCurrentSession = false;
             lastRenderedSignature = string.Empty;
             lastSharedUserCardStatsSignature = string.Empty;
@@ -172,8 +185,12 @@ namespace Thesis.Orchestration.Backends.Netcode
             if (!IsSpawned)
                 return;
 
+            SubmitLocalLifecycleSnapshotIfNeeded();
+
             if (IsServer)
             {
+                ReconcileConnectedPlayersIfNeeded();
+
                 if (sessionStartedNetworked.Value && !queueRuntimeActiveNetworked.Value && !hasInitializedForCurrentSession)
                     TryInitializeQueueRuntime();
 
@@ -187,6 +204,10 @@ namespace Thesis.Orchestration.Backends.Netcode
                     }
                 }
             }
+            else
+            {
+                RequestConnectedPlayersRefreshIfNeeded();
+            }
 
             RefreshRuntimeStateIfNeeded();
         }
@@ -196,12 +217,14 @@ namespace Thesis.Orchestration.Backends.Netcode
             UnbindEvents();
         }
 
-        private void OnDestroy()
+        public override void OnDestroy()
         {
             UnbindEvents();
 
             if (Instance == this)
                 Instance = null;
+
+            base.OnDestroy();
         }
 
         public void RequestBeginSessionForLocalPlayer()
@@ -265,9 +288,13 @@ namespace Thesis.Orchestration.Backends.Netcode
         }
 
         [ServerRpc(RequireOwnership = false)]
-        private void RequestBeginSessionServerRpc(string requestingUserId)
+        private void RequestBeginSessionServerRpc(string requestingUserId, ServerRpcParams rpcParams = default)
         {
             if (!IsServer || sessionStartedNetworked.Value)
+                return;
+
+            if (!QueueRequestIdentity.Accept(requestingUserId, ConvertClientToUserId(rpcParams.Receive.SenderClientId),
+                    "BeginSession", CurrentInstrumentId))
                 return;
 
             sessionStartedNetworked.Value = true;
@@ -280,9 +307,13 @@ namespace Thesis.Orchestration.Backends.Netcode
         }
 
         [ServerRpc(RequireOwnership = false)]
-        private void RequestAccessServerRpc(string userId, string instrumentId)
+        private void RequestAccessServerRpc(string userId, string instrumentId, ServerRpcParams rpcParams = default)
         {
             if (!IsServer || !queueRuntimeActiveNetworked.Value || sharedLogic == null || !sharedLogic.IsInitialized)
+                return;
+
+            if (!QueueRequestIdentity.Accept(userId, ConvertClientToUserId(rpcParams.Receive.SenderClientId),
+                    "RequestAccess", instrumentId))
                 return;
 
             sharedLogic.RecordQueueRequest(
@@ -297,9 +328,13 @@ namespace Thesis.Orchestration.Backends.Netcode
         }
 
         [ServerRpc(RequireOwnership = false)]
-        private void ReleaseAccessServerRpc(string userId, string instrumentId)
+        private void ReleaseAccessServerRpc(string userId, string instrumentId, ServerRpcParams rpcParams = default)
         {
             if (!IsServer || !queueRuntimeActiveNetworked.Value || sharedLogic == null || !sharedLogic.IsInitialized)
+                return;
+
+            if (!QueueRequestIdentity.Accept(userId, ConvertClientToUserId(rpcParams.Receive.SenderClientId),
+                    "ReleaseAccess", instrumentId))
                 return;
 
             QueueDecision decision = sharedLogic.ReleaseAccess(userId, instrumentId);
@@ -313,18 +348,48 @@ namespace Thesis.Orchestration.Backends.Netcode
         }
 
         [ServerRpc(RequireOwnership = false)]
-        private void HeartbeatServerRpc(string userId, string instrumentId)
+        private void HeartbeatServerRpc(string userId, string instrumentId, ServerRpcParams rpcParams = default)
         {
             if (!IsServer || !queueRuntimeActiveNetworked.Value || sharedLogic == null || !sharedLogic.IsInitialized)
+                return;
+
+            if (!QueueRequestIdentity.Accept(userId, ConvertClientToUserId(rpcParams.Receive.SenderClientId),
+                    "Heartbeat", instrumentId))
                 return;
 
             sharedLogic.RegisterHeartbeat(userId, instrumentId);
         }
 
         [ServerRpc(RequireOwnership = false)]
+        private void RequestConnectedPlayersRefreshServerRpc()
+        {
+            BroadcastState("Connected-player roster refresh requested.");
+        }
+
+        [ServerRpc(RequireOwnership = false)]
         private void SubmitLifecycleSnapshotServerRpc(string rowJson)
         {
             SessionLifecycleTracker.Instance?.ApplyRowJson(rowJson);
+        }
+
+        [ServerRpc(RequireOwnership = false)]
+        private void SubmitAuthorityTransferSnapshotServerRpc(string rowJson)
+        {
+            AuthorityTransferRecorder.Instance?.ApplyCompletedRowJson(rowJson);
+        }
+
+        public void SubmitAuthorityTransferSnapshot(string rowJson)
+        {
+            if (!IsSpawned || string.IsNullOrWhiteSpace(rowJson))
+                return;
+
+            if (IsServer)
+            {
+                AuthorityTransferRecorder.Instance?.ApplyCompletedRowJson(rowJson);
+                return;
+            }
+
+            SubmitAuthorityTransferSnapshotServerRpc(rowJson);
         }
 
         private void TryBindEvents()
@@ -378,7 +443,7 @@ namespace Thesis.Orchestration.Backends.Netcode
                 return;
 
             if (sharedRegistry == null)
-                sharedRegistry = SharedObjectSyncRegistry.Instance;
+                sharedRegistry = SharedObjectSyncRegistry.ResolveOrCreate();
 
             if (sharedRegistry == null)
             {
@@ -397,6 +462,7 @@ namespace Thesis.Orchestration.Backends.Netcode
 
             string instrumentId = instrumentDefinition.ObjectId;
             currentInstrumentIdNetworked.Value = new FixedString64Bytes(instrumentId);
+            sessionRunIdNetworked.Value = new FixedString64Bytes(SessionRunIdentity.NewId());
 
             IEnumerable<string> userIds = GetActiveUserIds();
             sharedLogic.Initialize(instrumentId, userIds);
@@ -512,6 +578,7 @@ namespace Thesis.Orchestration.Backends.Netcode
             if (string.IsNullOrWhiteSpace(localUserId) || localUserId == "UnknownUser")
                 return;
 
+            SessionLifecycleTracker.Instance.MergePlaceholderRowsInto(localUserId);
             string rowJson = SessionLifecycleTracker.Instance.BuildBestRowJson(localUserId);
             if (string.IsNullOrWhiteSpace(rowJson) ||
                 string.Equals(lastSubmittedLifecycleRowJson, rowJson, StringComparison.Ordinal))
@@ -528,6 +595,36 @@ namespace Thesis.Orchestration.Backends.Netcode
             }
 
             SubmitLifecycleSnapshotServerRpc(rowJson);
+        }
+
+        private void ReconcileConnectedPlayersIfNeeded()
+        {
+            if (Time.unscaledTime < nextConnectedPlayersAuditTime)
+                return;
+
+            nextConnectedPlayersAuditTime =
+                Time.unscaledTime + ConnectedPlayersRefreshIntervalSeconds;
+            string authoritativeRoster = string.Join(JoinedEntrySeparator, GetActiveUserIds());
+            if (!string.Equals(
+                    connectedPlayersJoinedNetworked.Value.ToString(),
+                    authoritativeRoster,
+                    StringComparison.Ordinal))
+            {
+                BroadcastState("Connected-player roster reconciled.");
+            }
+        }
+
+        private void RequestConnectedPlayersRefreshIfNeeded()
+        {
+            if (ConnectedPlayersSnapshot.Count >= 2 ||
+                Time.unscaledTime < nextConnectedPlayersRequestTime)
+            {
+                return;
+            }
+
+            nextConnectedPlayersRequestTime =
+                Time.unscaledTime + ConnectedPlayersRefreshIntervalSeconds;
+            RequestConnectedPlayersRefreshServerRpc();
         }
 
         private string BuildReplicatedStateSignature()

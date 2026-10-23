@@ -1,7 +1,10 @@
 # VLab Orchestrator Publication Evidence Package
 
-This directory records the implementation and evaluation evidence for a
-SoftwareX submission about the VLab Orchestrator.
+This directory records implementation and evaluation evidence for VLab
+Orchestrator. The SoftwareX preparation documents and audit snapshots below are
+historical records; the manuscript was subsequently submitted to IEEE Access.
+See [publication history](PUBLICATION_HISTORY.md). Historical version/status
+tables below are not declarations of the current build or revision status.
 
 ## Snapshot
 

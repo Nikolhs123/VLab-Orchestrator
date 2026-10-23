@@ -20,7 +20,12 @@ namespace Thesis.Orchestration.Debugging
 
         public void Add(string message)
         {
-            string formatted = $"[{DateTime.Now:HH:mm:ss}] {message}";
+            AddFormatted($"[{DateTime.Now:HH:mm:ss}] {message}");
+        }
+
+        // Adds an entry that already carries its original timestamp (e.g. restored from a replicated snapshot).
+        public void AddFormatted(string formatted)
+        {
             events.Enqueue(formatted);
 
             while (events.Count > maxEntries)

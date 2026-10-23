@@ -398,10 +398,15 @@ namespace VLabOrchestrator.Showcase.Editor
 
         private static void ValidateMaterializedSourceTree()
         {
-            string sourceRoot = Path.GetFullPath(Path.Combine(
-                Application.dataPath, "..", "..", "..", "framework"));
-            string adaptersRoot = Path.GetFullPath(Path.Combine(
-                Application.dataPath, "..", "..", "..", "backend-adapters"));
+            // Resolve like SoftwareXRuntimeInstaller: repo/src beside the core package, so the
+            // check also works when the project references the packages from another location.
+            UnityEditor.PackageManager.PackageInfo corePackage =
+                UnityEditor.PackageManager.PackageInfo.FindForAssetPath("Packages/com.vlab.orchestrator.core");
+            string publicationSourceRoot = corePackage != null && !string.IsNullOrEmpty(corePackage.resolvedPath)
+                ? Path.GetFullPath(Path.Combine(corePackage.resolvedPath, "..", ".."))
+                : Path.GetFullPath(Path.Combine(Application.dataPath, "..", "..", ".."));
+            string sourceRoot = Path.Combine(publicationSourceRoot, "framework");
+            string adaptersRoot = Path.Combine(publicationSourceRoot, "backend-adapters");
             string generatedRoot = Path.GetFullPath(Path.Combine(
                 Application.dataPath, "GeneratedSoftwareXRuntime"));
 

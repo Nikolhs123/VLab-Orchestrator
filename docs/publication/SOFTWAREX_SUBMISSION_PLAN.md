@@ -1,5 +1,10 @@
 # SoftwareX Submission Plan
 
+> Historical preparation document. The SoftwareX submission was not completed
+> because APC funding was unavailable. The manuscript was subsequently adapted
+> for IEEE Access. Instructions and status statements below reflect the earlier
+> preparation stage, not the current submission. See [publication history](PUBLICATION_HISTORY.md).
+
 ## Source Requirements
 
 This plan is based on:

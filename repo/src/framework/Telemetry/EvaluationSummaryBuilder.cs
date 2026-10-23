@@ -80,6 +80,8 @@ namespace Thesis.Orchestration.Telemetry
             public double meanTransferLatencyMs;
             public double medianTransferLatencyMs;
             public double stdDevTransferLatencyMs;
+            public int latencySampleCount;
+            public int unavailableLatencyCount;
         }
 
         [Serializable]
@@ -331,7 +333,11 @@ namespace Thesis.Orchestration.Telemetry
                 ? (double)summary.successfulTransfers / summary.transferCount
                 : 0d;
 
-            FillStats(rows.Select(x => x.transferLatencyMs).Where(x => x > 0), out summary.meanTransferLatencyMs, out summary.medianTransferLatencyMs, out summary.stdDevTransferLatencyMs);
+            var latencySamples = rows.Where(x => x.latencyAvailable && x.transferLatencyMs >= 0d)
+                .Select(x => x.transferLatencyMs).ToList();
+            summary.latencySampleCount = latencySamples.Count;
+            summary.unavailableLatencyCount = rows.Count - latencySamples.Count;
+            FillStats(latencySamples, out summary.meanTransferLatencyMs, out summary.medianTransferLatencyMs, out summary.stdDevTransferLatencyMs);
 
             return summary;
         }
@@ -403,8 +409,8 @@ namespace Thesis.Orchestration.Telemetry
         public void SaveAuthorityMetricsSummaryCsv(string filePath, AuthorityMetricsSummary s)
         {
             StringBuilder sb = new StringBuilder();
-            sb.AppendLine("run_id,backend,scenario_id,transfer_count,successful_transfers,failed_transfers,success_rate,mean_transfer_latency_ms,median_transfer_latency_ms,stddev_transfer_latency_ms");
-            sb.AppendLine($"{Q(s.runId)},{Q(s.backend)},{Q(s.scenarioId)},{s.transferCount},{s.successfulTransfers},{s.failedTransfers},{F(s.successRate)},{F(s.meanTransferLatencyMs)},{F(s.medianTransferLatencyMs)},{F(s.stdDevTransferLatencyMs)}");
+            sb.AppendLine("run_id,backend,scenario_id,transfer_count,successful_transfers,failed_transfers,success_rate,mean_transfer_latency_ms,median_transfer_latency_ms,stddev_transfer_latency_ms,latency_sample_count,unavailable_latency_count");
+            sb.AppendLine($"{Q(s.runId)},{Q(s.backend)},{Q(s.scenarioId)},{s.transferCount},{s.successfulTransfers},{s.failedTransfers},{F(s.successRate)},{F(s.meanTransferLatencyMs)},{F(s.medianTransferLatencyMs)},{F(s.stdDevTransferLatencyMs)},{s.latencySampleCount},{s.unavailableLatencyCount}");
             File.WriteAllText(filePath, sb.ToString(), Encoding.UTF8);
         }
 

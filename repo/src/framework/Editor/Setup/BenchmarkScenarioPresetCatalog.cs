@@ -10,7 +10,7 @@ namespace Thesis.Orchestration.EditorTools
 {
     internal static class BenchmarkScenarioPresetCatalog
     {
-        internal const string ProtocolVersion = "1.5";
+        internal const string ProtocolVersion = "1.6";
 
         private static readonly string[] BackendNames =
         {

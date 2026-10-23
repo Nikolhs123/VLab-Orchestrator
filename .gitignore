@@ -14,6 +14,14 @@
 .vscode/
 .idea/
 *.csproj
+!/tests/AuthorityLifecycle/AuthorityLifecycle.csproj
+/tests/AuthorityLifecycle/bin/
+!/tests/QueueCore/QueueCore.csproj
+/tests/QueueCore/bin/
+!/tests/SdkCompileCheck/SdkCompileCheck.csproj
+!/tests/SdkCompileCheck/Core/VLab.Orchestrator.Core.csproj
+/tests/SdkCompileCheck/bin/
+/tests/SdkCompileCheck/Core/bin/
 *.sln
 *.slnx
 *.unityproj
@@ -69,3 +77,6 @@ NetworkProjectConfig.fusion
 /repo/src/showcase/UnityProject/Assets/DefaultNetworkPrefabs.asset.meta
 /repo/src/showcase/UnityProject/Assets/DefaultPrefabObjects.asset
 /repo/src/showcase/UnityProject/Assets/DefaultPrefabObjects.asset.meta
+# Written before every player build by BuildProvenanceRecorder
+/repo/src/showcase/UnityProject/Assets/Resources/VLabOrchestrator/BuildProvenance.txt
+/repo/src/showcase/UnityProject/Assets/Resources/VLabOrchestrator/BuildProvenance.txt.meta

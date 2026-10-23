@@ -1,0 +1,62 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <!--
+    Compile-only check of the canonical framework runtime and all five backend adapters
+    against locally installed vendor SDK assemblies. No SDK binary is stored in this
+    repository. It does not run Unity IL weavers/code generators and does not execute
+    any networking code: it verifies C# API compatibility only.
+
+    Usage:
+      dotnet build tests/SdkCompileCheck/SdkCompileCheck.csproj
+        -p:UnityEditorData="<Unity>/Editor/Data"
+        -p:SdkScriptAssemblies="<project with SDK matrix>/Library/ScriptAssemblies"
+        -p:PhotonAssets="<project with SDK matrix>/Assets/Photon"
+  -->
+  <PropertyGroup>
+    <TargetFramework>netstandard2.1</TargetFramework>
+    <OutputType>Library</OutputType>
+    <LangVersion>9.0</LangVersion>
+    <Nullable>disable</Nullable>
+    <ImplicitUsings>disable</ImplicitUsings>
+    <EnableDefaultCompileItems>false</EnableDefaultCompileItems>
+    <DisableImplicitFrameworkReferences>true</DisableImplicitFrameworkReferences>
+    <GenerateAssemblyInfo>false</GenerateAssemblyInfo>
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+    <NoWarn>$(NoWarn);CS0414;CS0649;CS0169;CS0067;CS0618</NoWarn>
+    <DefineConstants>PHOTON_UNITY_NETWORKING;UNITY_2023_1_OR_NEWER;UNITY_6000_0_OR_NEWER;UNITY_STANDALONE_WIN</DefineConstants>
+    <SourceRoot Condition="'$(SourceRoot)' == ''">$(MSBuildThisFileDirectory)../../repo/src</SourceRoot>
+    <UnityEditorData Condition="'$(UnityEditorData)' == ''">C:/Program Files/Unity/Hub/Editor/6000.3.11f1/Editor/Data</UnityEditorData>
+  </PropertyGroup>
+
+  <!-- Exclusions mirror SoftwareXRuntimeInstaller.ExcludedFrameworkFiles/ExcludedAdapterFiles. -->
+  <ItemGroup>
+    <Compile Include="$(SourceRoot)/framework/**/*.cs"
+             Exclude="$(SourceRoot)/framework/**/Editor/**;$(SourceRoot)/framework/Core/InstrumentStateModel.cs;$(SourceRoot)/framework/Core/QueueManagerCore.cs;$(SourceRoot)/framework/Core/UserStateModel.cs;$(SourceRoot)/framework/Policies/PolicyEngineCore.cs" />
+    <Compile Include="$(SourceRoot)/backend-adapters/**/*.cs"
+             Exclude="$(SourceRoot)/backend-adapters/PUN2/StandaloneShared/ImmersionOilNetworkStateAdapter.cs;$(SourceRoot)/backend-adapters/PUN2/StandaloneShared/SlideNetworkStateAdapter.cs" />
+  </ItemGroup>
+
+  <!-- -p:IncludeEditor=true also compiles the materialized framework Editor code with UNITY_EDITOR. -->
+  <PropertyGroup Condition="'$(IncludeEditor)' == 'true'">
+    <DefineConstants>$(DefineConstants);UNITY_EDITOR;UNITY_EDITOR_WIN</DefineConstants>
+  </PropertyGroup>
+  <ItemGroup Condition="'$(IncludeEditor)' == 'true'">
+    <Compile Include="$(SourceRoot)/framework/**/Editor/**/*.cs" Exclude="$(SourceRoot)/framework/Editor/Setup/OrchestrationSetupWindow.cs" />
+    <Reference Include="$(UnityEditorData)/Managed/UnityEditor.dll" Private="false" />
+    <Reference Include="mscorlib" HintPath="$(UnityEditorData)/NetStandard/compat/2.1.0/shims/netfx/mscorlib.dll" Private="false" />
+    <Reference Include="$(SdkScriptAssemblies)/*Editor*.dll" Exclude="$(SdkScriptAssemblies)/Assembly-CSharp*.dll;$(SdkScriptAssemblies)/*Test*.dll" Private="false" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="Core/VLab.Orchestrator.Core.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <Reference Include="netstandard" HintPath="$(UnityEditorData)/NetStandard/ref/2.1.0/netstandard.dll" Private="false" />
+    <Reference Include="$(UnityEditorData)/Managed/UnityEngine/*.dll" Private="false" />
+    <Reference Include="$(SdkScriptAssemblies)/*.dll"
+               Exclude="$(SdkScriptAssemblies)/Assembly-CSharp*.dll;$(SdkScriptAssemblies)/*Editor*.dll;$(SdkScriptAssemblies)/*CodeGen*.dll;$(SdkScriptAssemblies)/*Codegen*.dll;$(SdkScriptAssemblies)/*Demos*.dll;$(SdkScriptAssemblies)/*Examples*.dll;$(SdkScriptAssemblies)/*Test*.dll"
+               Private="false" />
+    <Reference Include="$(PhotonAssets)/Fusion/Assemblies/*.dll" Private="false" />
+    <Reference Include="$(PhotonAssets)/PhotonLibs/netstandard2.0/Photon3Unity3D.dll" Private="false" />
+  </ItemGroup>
+</Project>

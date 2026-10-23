@@ -52,6 +52,19 @@ namespace Thesis.Orchestration.Runtime.Bootstrap
             SpawnBackendRuntimeIfNeeded();
             SpawnAutomatedScenarioRunnerIfNeeded();
             SpawnTelemetryUiIfNeeded();
+
+            // Command-line two-participant automation (-vlabSession host|client); see CommandLineSessionAutomation.
+            if (CommandLineSessionAutomation.IsRequested() && GetComponent<CommandLineSessionAutomation>() == null)
+                gameObject.AddComponent<CommandLineSessionAutomation>();
+
+            // The lifecycle driver must survive the runtime objects it observes being torn down on disconnect.
+            if (!string.IsNullOrWhiteSpace(projectConfig.LifecycleCase) &&
+                FindFirstObjectByType<Thesis.Orchestration.Runtime.Scenarios.LifecycleScenarioDriver>() == null)
+            {
+                GameObject driverHost = new GameObject("VLabLifecycleScenarioDriver");
+                DontDestroyOnLoad(driverHost);
+                driverHost.AddComponent<Thesis.Orchestration.Runtime.Scenarios.LifecycleScenarioDriver>();
+            }
         }
 
         private void EnsureEvaluationMetricsRuntime()

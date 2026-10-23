@@ -15,6 +15,8 @@ namespace Thesis.Orchestration.Backends.FishNet
     {
         public static SessionOrchestratorFishNet Instance { get; private set; }
 
+        private bool playerCacheRefreshPending;
+
         [Header("FishNet Settings")]
         [SerializeField] private NetworkManager networkManager;
         [SerializeField] private Tugboat tugboat;
@@ -111,8 +113,14 @@ namespace Thesis.Orchestration.Backends.FishNet
         {
             ResolveReferences();
             TryBindCallbacks();
+            if (playerCacheRefreshPending)
+            {
+                playerCacheRefreshPending = false;
+                RefreshPlayerCache();
+            }
             TryMergeLifecycleLocalPlaceholder();
             RegisterQueueRuntimePrefabIfNeeded();
+            ReactivateClientSpawnedObjectsDeactivatedAtStart();
 
             bool started = SessionStarted;
             if (started == localSessionStarted)
@@ -313,11 +321,6 @@ namespace Thesis.Orchestration.Backends.FishNet
             RaiseStatus("Session started locally (runtime not found).");
             OnSessionStateChanged?.Invoke(localSessionStarted);
             NetworkAvatarSpawnerFishNet.Instance?.EnsureSpawnForConnectedClients();
-        }
-
-        public bool SessionExists(string roomName)
-        {
-            return false;
         }
 
         public void ConfigureRuntime(NetworkManager manager, Tugboat transport, SessionQueueRuntimeFishNet runtimeTemplate)
@@ -526,17 +529,50 @@ namespace Thesis.Orchestration.Backends.FishNet
             ResetLocalState(notifyObservers: true);
         }
 
+        // When a remote connection stops, FishNet still lists it in the Clients dictionaries while the
+        // event runs. Refreshing only then kept the departed participant in the player list, so the queue
+        // never processed the departure. Exclude the stopping connection now and refresh again next frame.
         private void HandleServerRemoteConnectionState(NetworkConnection connection, RemoteConnectionStateArgs args)
         {
-            RefreshPlayerCache();
+            RefreshPlayerCache(args.ConnectionState == RemoteConnectionState.Stopped ? args.ConnectionId : (int?)null);
+            playerCacheRefreshPending = true;
+        }
+
+        // FishNet 4.6.22 NetworkObject.Start() deactivates an object when the client is not yet reported as
+        // started+authenticated. Objects in the initial spawn batch of a late-joining client can reach Start()
+        // in that window although they are already spawned and client-initialized, leaving the replica inactive
+        // (its behaviours never run). Observed in the L3 LateJoin lifecycle case; the server never despawned it.
+        private void ReactivateClientSpawnedObjectsDeactivatedAtStart()
+        {
+            if (!IsNetworkManagerInitialized || networkManager.IsServerStarted || !networkManager.IsClientStarted)
+                return;
+
+            foreach (NetworkObject spawned in networkManager.ClientManager.Objects.Spawned.Values)
+            {
+                if (spawned == null || spawned.gameObject.activeSelf ||
+                    !spawned.IsClientInitialized || !spawned.IsSpawned || spawned.IsNested)
+                {
+                    continue;
+                }
+
+                spawned.gameObject.SetActive(true);
+                Debug.Log($"[SessionOrchestratorFishNet] Reactivated client-spawned object '{spawned.name}' " +
+                          $"(objectId={spawned.ObjectId}) that FishNet deactivated at Start before the client was reported started.");
+                TelemetryLoggerCore.Instance?.LogEvent(
+                    "FishNetSpawnedObjectReactivated",
+                    GetLocalUserId(),
+                    spawned.name,
+                    $"objectId={spawned.ObjectId}; deactivated by NetworkObject.Start while client not yet reported started.");
+            }
         }
 
         private void HandleClientRemoteConnectionState(RemoteConnectionStateArgs args)
         {
-            RefreshPlayerCache();
+            RefreshPlayerCache(args.ConnectionState == RemoteConnectionState.Stopped ? args.ConnectionId : (int?)null);
+            playerCacheRefreshPending = true;
         }
 
-        private void RefreshPlayerCache()
+        private void RefreshPlayerCache(int? stoppingConnectionId = null)
         {
             HashSet<int> playerIds = new HashSet<int>();
 
@@ -561,6 +597,9 @@ namespace Thesis.Orchestration.Backends.FishNet
                         playerIds.Add(clientId);
                 }
             }
+
+            if (stoppingConnectionId.HasValue)
+                playerIds.Remove(stoppingConnectionId.Value);
 
             cachedPlayers.Clear();
             cachedPlayers.AddRange(playerIds.OrderBy(id => id));

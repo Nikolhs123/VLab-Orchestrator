@@ -576,10 +576,7 @@ namespace Thesis.Orchestration.Telemetry
             if (rooms == null || rooms.Count == 0)
             {
                 bool isDirectJoinBackend =
-                    projectConfig != null &&
-                    (projectConfig.backendType == OrchestrationBackendType.UnityNetcode ||
-                     projectConfig.backendType == OrchestrationBackendType.FishNet ||
-                     projectConfig.backendType == OrchestrationBackendType.Mirror);
+                    sessionView != null && sessionView.LookupRoom(string.Empty) == RoomLookupResult.Unsupported;
 
                 networkingAvailableRoomsText.text = isDirectJoinBackend
                     ? "Available Rooms:\nNone\n\nDirect join only.\nEnter a room name manually."
@@ -1091,14 +1088,20 @@ namespace Thesis.Orchestration.Telemetry
             bool connected = sessionView != null && sessionView.IsConnectedToServer;
             bool inRoom = sessionView != null && sessionView.IsInRoom;
 
-            bool typedRoomExists = sessionView != null && hasTypedRoomName && sessionView.RoomExists(typedRoomName);
-            bool effectiveRoomExists = sessionView != null && hasEffectiveRoomName && sessionView.RoomExists(effectiveRoomName);
+            RoomLookupResult typedRoomLookup = sessionView != null && hasTypedRoomName
+                ? sessionView.LookupRoom(typedRoomName)
+                : RoomLookupResult.Unavailable;
+            RoomLookupResult effectiveRoomLookup = sessionView != null && hasEffectiveRoomName
+                ? sessionView.LookupRoom(effectiveRoomName)
+                : RoomLookupResult.Unavailable;
+            bool typedRoomExists = typedRoomLookup == RoomLookupResult.Exists;
+            bool effectiveRoomExists = effectiveRoomLookup == RoomLookupResult.Exists;
 
+            // Backends without room discovery cannot pre-validate create/join; the attempt itself is the check.
             bool isDirectConnectBackend =
-                projectConfig != null &&
-                (projectConfig.backendType == OrchestrationBackendType.UnityNetcode ||
-                 projectConfig.backendType == OrchestrationBackendType.FishNet ||
-                 projectConfig.backendType == OrchestrationBackendType.Mirror);
+                sessionView != null &&
+                sessionView.LookupRoom(hasTypedRoomName ? typedRoomName : effectiveRoomName ?? string.Empty) ==
+                RoomLookupResult.Unsupported;
 
             if (networkingConnectButton != null)
                 networkingConnectButton.interactable = sessionView != null && !connected;

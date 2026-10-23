@@ -38,6 +38,25 @@ namespace Thesis.Orchestration.Backends.PUN2
         private readonly List<RoomInfo> cachedRooms = new();
         private GameObject spawnedQueueRuntimeObject;
 
+        [Serializable]
+        private sealed class SharedPhotonViewMap
+        {
+            public List<SharedPhotonViewAssignment> assignments = new();
+        }
+
+        [Serializable]
+        private sealed class SharedPhotonViewAssignment
+        {
+            public string key;
+            public int viewId;
+        }
+
+        private sealed class SharedPhotonViewBinding
+        {
+            public string Key;
+            public PhotonView View;
+        }
+
         public event Action OnConnectedToServer;
         public event Action<string> OnConnectionFailed;
         public event Action<string> OnRoomCreated;
@@ -48,6 +67,7 @@ namespace Thesis.Orchestration.Backends.PUN2
         public event Action<string> OnStatusMessage;
 
         private const string SessionStartedRoomPropertyKey = "SESSION_STARTED";
+        private const string SharedViewMapRoomPropertyKey = "ORCHESTRATION_SHARED_VIEW_MAP";
         private bool isCleaningUpRuntime;
 
         private void Awake()
@@ -217,6 +237,7 @@ namespace Thesis.Orchestration.Backends.PUN2
             }
 
             EnsureQueueRuntimeSpawned();
+            EnsureSharedPhotonViewMap();
             SessionLifecycleTracker.Instance?.MarkSessionStartPressed(GetLifecycleClientId());
 
             ExitGames.Client.Photon.Hashtable properties = new ExitGames.Client.Photon.Hashtable
@@ -354,6 +375,189 @@ namespace Thesis.Orchestration.Backends.PUN2
             OnSessionStateChanged?.Invoke(SessionStarted);
         }
 
+        // Runtime-provisioned instruments exist locally on every peer, so the room
+        // supplies a deterministic ViewID map rather than network-instantiating duplicates.
+        private string EnsureSharedPhotonViewMap()
+        {
+            if (!PhotonNetwork.InRoom || PhotonNetwork.CurrentRoom == null)
+                return string.Empty;
+
+            if (PhotonNetwork.CurrentRoom.CustomProperties.TryGetValue(
+                    SharedViewMapRoomPropertyKey,
+                    out object existingValue) &&
+                existingValue is string existingJson &&
+                !string.IsNullOrWhiteSpace(existingJson))
+            {
+                ApplySharedPhotonViewMap(existingJson);
+                return existingJson;
+            }
+
+            if (!PhotonNetwork.IsMasterClient)
+                return string.Empty;
+
+            List<SharedPhotonViewBinding> localBindings = CollectSharedPhotonViewBindings();
+            var map = new SharedPhotonViewMap();
+
+            foreach (SharedPhotonViewBinding binding in localBindings)
+            {
+                PhotonView view = binding.View;
+                if (view == null)
+                    continue;
+
+                if (view.ViewID != 0)
+                    view.ViewID = 0;
+
+                if (!PhotonNetwork.AllocateRoomViewID(view))
+                {
+                    Debug.LogError(
+                        $"[SessionOrchestratorPUN2] Could not allocate a room ViewID for '{binding.Key}'.",
+                        view);
+                    continue;
+                }
+
+                map.assignments.Add(new SharedPhotonViewAssignment
+                {
+                    key = binding.Key,
+                    viewId = view.ViewID
+                });
+            }
+
+            string json = JsonUtility.ToJson(map);
+            PhotonNetwork.CurrentRoom.SetCustomProperties(new ExitGames.Client.Photon.Hashtable
+            {
+                { SharedViewMapRoomPropertyKey, json }
+            });
+
+            Log($"Registered {map.assignments.Count} shared instrument PhotonViews as room views.");
+            return json;
+        }
+
+        private void ApplySharedPhotonViewMap(string json)
+        {
+            if (string.IsNullOrWhiteSpace(json))
+                return;
+
+            SharedPhotonViewMap map;
+            try
+            {
+                map = JsonUtility.FromJson<SharedPhotonViewMap>(json);
+            }
+            catch (Exception exception)
+            {
+                Debug.LogError(
+                    $"[SessionOrchestratorPUN2] Shared PhotonView map is invalid: {exception.Message}",
+                    this);
+                return;
+            }
+
+            if (map?.assignments == null)
+                return;
+
+            var localViews = new Dictionary<string, PhotonView>(StringComparer.Ordinal);
+            foreach (SharedPhotonViewBinding binding in CollectSharedPhotonViewBindings())
+            {
+                if (!localViews.TryAdd(binding.Key, binding.View))
+                {
+                    Debug.LogError(
+                        $"[SessionOrchestratorPUN2] Duplicate shared PhotonView key '{binding.Key}'.",
+                        binding.View);
+                }
+            }
+
+            int appliedCount = 0;
+            foreach (SharedPhotonViewAssignment assignment in map.assignments)
+            {
+                if (assignment == null || assignment.viewId == 0 ||
+                    !localViews.TryGetValue(assignment.key, out PhotonView view) ||
+                    view == null)
+                {
+                    continue;
+                }
+
+                if (view.ViewID != assignment.viewId)
+                {
+                    if (view.ViewID != 0)
+                        view.ViewID = 0;
+                    view.ViewID = assignment.viewId;
+                }
+
+                appliedCount++;
+            }
+
+            if (appliedCount != map.assignments.Count || appliedCount != localViews.Count)
+            {
+                Debug.LogError(
+                    "[SessionOrchestratorPUN2] Shared object topology differs between clients. " +
+                    $"RoomViews={map.assignments.Count}, LocalViews={localViews.Count}, Applied={appliedCount}.",
+                    this);
+            }
+        }
+
+        private static List<SharedPhotonViewBinding> CollectSharedPhotonViewBindings()
+        {
+            AutomaticBackendObjectBinding[] roots = FindObjectsByType<AutomaticBackendObjectBinding>(
+                FindObjectsInactive.Include,
+                FindObjectsSortMode.None);
+            var bindings = new List<SharedPhotonViewBinding>();
+
+            foreach (AutomaticBackendObjectBinding binding in roots)
+            {
+                if (binding == null || !binding.gameObject.scene.IsValid())
+                    continue;
+
+                SharedSyncObjectDefinition definition = binding.GetComponent<SharedSyncObjectDefinition>();
+                string objectId = definition != null && !string.IsNullOrWhiteSpace(definition.ObjectId)
+                    ? definition.ObjectId
+                    : binding.gameObject.name;
+                Transform root = binding.transform;
+
+                foreach (PhotonView view in root.GetComponentsInChildren<PhotonView>(true))
+                {
+                    if (view == null)
+                        continue;
+
+                    bindings.Add(new SharedPhotonViewBinding
+                    {
+                        Key = $"{objectId}|{BuildRelativeTransformPath(root, view.transform)}",
+                        View = view
+                    });
+                }
+            }
+
+            return bindings
+                .OrderBy(binding => binding.Key, StringComparer.Ordinal)
+                .ToList();
+        }
+
+        private static string BuildRelativeTransformPath(Transform root, Transform target)
+        {
+            if (root == null || target == null || root == target)
+                return ".";
+
+            var segments = new List<string>();
+            Transform current = target;
+            while (current != null && current != root)
+            {
+                segments.Add($"{current.name}[{current.GetSiblingIndex()}]");
+                current = current.parent;
+            }
+
+            if (current != root)
+                return target.name;
+
+            segments.Reverse();
+            return string.Join("/", segments);
+        }
+
+        private static void ResetSharedPhotonViewIds()
+        {
+            foreach (SharedPhotonViewBinding binding in CollectSharedPhotonViewBindings())
+            {
+                if (binding.View != null && binding.View.ViewID != 0)
+                    binding.View.ViewID = 0;
+            }
+        }
+
         private void CleanupPhotonRuntimeState(string source)
         {
             if (isCleaningUpRuntime)
@@ -445,6 +649,7 @@ namespace Thesis.Orchestration.Backends.PUN2
             base.OnDisconnected(cause);
 
             isCleaningUpRuntime = false;
+            ResetSharedPhotonViewIds();
             ResetLocalState(notifyObservers: false);
 
             string msg = $"Disconnected from Photon. Cause: {cause}";
@@ -482,6 +687,7 @@ namespace Thesis.Orchestration.Backends.PUN2
             SessionLifecycleTracker.Instance?.MergeClientRow("PUN2_LocalClient", GetLifecycleClientId());
             SessionLifecycleTracker.Instance?.MarkJoinSucceeded(GetLifecycleClientId());
 
+            EnsureSharedPhotonViewMap();
             UpdateSessionStateFromRoomProperties();
             RefreshPlayerCache();
             EnsureQueueRuntimeSpawned();
@@ -535,6 +741,7 @@ namespace Thesis.Orchestration.Backends.PUN2
             base.OnLeftRoom();
 
             isCleaningUpRuntime = false;
+            ResetSharedPhotonViewIds();
             SessionStarted = false;
             spawnedQueueRuntimeObject = null;
             cachedPlayers.Clear();
@@ -548,6 +755,7 @@ namespace Thesis.Orchestration.Backends.PUN2
         public override void OnMasterClientSwitched(Player newMasterClient)
         {
             base.OnMasterClientSwitched(newMasterClient);
+            EnsureSharedPhotonViewMap();
             EnsureQueueRuntimeSpawned();
             RaiseStatus($"New Master Client: {newMasterClient.NickName} ({newMasterClient.ActorNumber})");
             RefreshPlayerCache();
@@ -557,6 +765,12 @@ namespace Thesis.Orchestration.Backends.PUN2
         public override void OnRoomPropertiesUpdate(ExitGames.Client.Photon.Hashtable propertiesThatChanged)
         {
             base.OnRoomPropertiesUpdate(propertiesThatChanged);
+
+            if (propertiesThatChanged.TryGetValue(SharedViewMapRoomPropertyKey, out object mapValue) &&
+                mapValue is string mapJson)
+            {
+                ApplySharedPhotonViewMap(mapJson);
+            }
 
             if (propertiesThatChanged.ContainsKey(SessionStartedRoomPropertyKey))
             {

@@ -43,6 +43,7 @@ namespace Thesis.Orchestration.Backends.Mirror
         private bool queueRuntimeActive;
         private bool sessionStarted;
         private string currentInstrumentId = string.Empty;
+        private string sessionRunId = string.Empty;
         private string currentHolderUserId = "None";
         private readonly List<string> currentQueueSnapshot = new();
         private readonly List<string> replicatedHistorySnapshot = new();
@@ -68,6 +69,7 @@ namespace Thesis.Orchestration.Backends.Mirror
         public bool SessionStarted => sessionStarted;
         public bool QueueRuntimeActive => queueRuntimeActive;
         public string CurrentInstrumentId => currentInstrumentId;
+        public string SessionRunId => sessionRunId;
         public string CurrentHolderUserId => string.IsNullOrWhiteSpace(currentHolderUserId) ? "None" : currentHolderUserId;
         public List<string> CurrentQueueSnapshot => new(currentQueueSnapshot);
         public List<string> ReplicatedHistorySnapshot => new(replicatedHistorySnapshot);
@@ -111,6 +113,44 @@ namespace Thesis.Orchestration.Backends.Mirror
             ResolveReferences();
             TryBindEvents();
             OnRuntimeStateUpdated?.Invoke();
+
+            // Mirror ClientRpcs are not buffered: a client spawning this object after the last state
+            // broadcast would otherwise keep stale queue/session state until the next change.
+            if (!isServer)
+                CmdRequestStateSync();
+        }
+
+        [global::Mirror.Command(requiresAuthority = false)]
+        private void CmdRequestStateSync(global::Mirror.NetworkConnectionToClient sender = null)
+        {
+            if (sender == null || sharedLogic == null || !sharedLogic.IsInitialized)
+                return;
+
+            TargetApplyReplicatedState(
+                sender,
+                queueRuntimeActive,
+                sessionStarted,
+                currentInstrumentId,
+                sessionRunId,
+                currentHolderUserId,
+                sharedLogic.BuildJoinedQueue(currentInstrumentId),
+                sharedLogic.BuildJoinedHistory(),
+                sharedUserCardStatsJson);
+        }
+
+        [global::Mirror.TargetRpc]
+        private void TargetApplyReplicatedState(
+            global::Mirror.NetworkConnectionToClient target,
+            bool runtimeActive,
+            bool replicatedSessionStarted,
+            string instrumentId,
+            string replicatedSessionRunId,
+            string holderUserId,
+            string joinedQueue,
+            string joinedHistory,
+            string encodedSharedUserCardStats)
+        {
+            ApplyReplicatedState(runtimeActive, replicatedSessionStarted, instrumentId, replicatedSessionRunId, holderUserId, joinedQueue, joinedHistory, encodedSharedUserCardStats);
         }
 
         public override void OnStopClient()
@@ -242,21 +282,33 @@ namespace Thesis.Orchestration.Backends.Mirror
         }
 
         [global::Mirror.Command(requiresAuthority = false)]
-        private void CmdRequestBeginSession(string requestingUserId)
+        private void CmdRequestBeginSession(string requestingUserId, global::Mirror.NetworkConnectionToClient sender = null)
         {
-            HandleBeginSessionRequest(requestingUserId);
+            if (IsFromSender(requestingUserId, sender, "BeginSession"))
+                HandleBeginSessionRequest(requestingUserId);
         }
 
         [global::Mirror.Command(requiresAuthority = false)]
-        private void CmdRequestAccess(string userId)
+        private void CmdRequestAccess(string userId, global::Mirror.NetworkConnectionToClient sender = null)
         {
-            HandleRequestAccess(userId);
+            if (IsFromSender(userId, sender, "RequestAccess"))
+                HandleRequestAccess(userId);
         }
 
         [global::Mirror.Command(requiresAuthority = false)]
-        private void CmdReleaseAccess(string userId)
+        private void CmdReleaseAccess(string userId, global::Mirror.NetworkConnectionToClient sender = null)
         {
-            HandleReleaseAccess(userId);
+            if (IsFromSender(userId, sender, "ReleaseAccess"))
+                HandleReleaseAccess(userId);
+        }
+
+        private bool IsFromSender(string claimedUserId, global::Mirror.NetworkConnectionToClient sender, string operation)
+        {
+            return QueueRequestIdentity.Accept(
+                claimedUserId,
+                sender != null ? ConvertClientToUserId(sender.connectionId) : null,
+                operation,
+                currentInstrumentId);
         }
 
         [global::Mirror.Command(requiresAuthority = false)]
@@ -266,9 +318,10 @@ namespace Thesis.Orchestration.Backends.Mirror
         }
 
         [global::Mirror.Command(requiresAuthority = false)]
-        private void CmdHeartbeat(string userId)
+        private void CmdHeartbeat(string userId, global::Mirror.NetworkConnectionToClient sender = null)
         {
-            HandleHeartbeat(userId);
+            if (IsFromSender(userId, sender, "Heartbeat"))
+                HandleHeartbeat(userId);
         }
 
         [global::Mirror.Command(requiresAuthority = false)]
@@ -296,18 +349,20 @@ namespace Thesis.Orchestration.Backends.Mirror
             bool runtimeActive,
             bool replicatedSessionStarted,
             string instrumentId,
+            string replicatedSessionRunId,
             string holderUserId,
             string joinedQueue,
             string joinedHistory,
             string encodedSharedUserCardStats)
         {
-            ApplyReplicatedState(runtimeActive, replicatedSessionStarted, instrumentId, holderUserId, joinedQueue, joinedHistory, encodedSharedUserCardStats);
+            ApplyReplicatedState(runtimeActive, replicatedSessionStarted, instrumentId, replicatedSessionRunId, holderUserId, joinedQueue, joinedHistory, encodedSharedUserCardStats);
         }
 
         private void ApplyReplicatedState(
             bool runtimeActive,
             bool replicatedSessionStarted,
             string instrumentId,
+            string replicatedSessionRunId,
             string holderUserId,
             string joinedQueue,
             string joinedHistory,
@@ -316,6 +371,7 @@ namespace Thesis.Orchestration.Backends.Mirror
             queueRuntimeActive = runtimeActive;
             sessionStarted = replicatedSessionStarted;
             currentInstrumentId = instrumentId ?? string.Empty;
+            sessionRunId = replicatedSessionRunId ?? string.Empty;
             currentHolderUserId = string.IsNullOrWhiteSpace(holderUserId) ? "None" : holderUserId;
 
             currentQueueSnapshot.Clear();
@@ -496,6 +552,7 @@ namespace Thesis.Orchestration.Backends.Mirror
             }
 
             currentInstrumentId = instrumentDefinition.ObjectId;
+            sessionRunId = SessionRunIdentity.NewId();
             currentHolderUserId = "None";
 
             IEnumerable<string> userIds = GetActiveUserIds();
@@ -548,6 +605,7 @@ namespace Thesis.Orchestration.Backends.Mirror
                 queueRuntimeActive,
                 sessionStarted,
                 currentInstrumentId,
+                sessionRunId,
                 currentHolderUserId,
                 joinedQueue,
                 joinedHistory,
@@ -557,6 +615,7 @@ namespace Thesis.Orchestration.Backends.Mirror
                 queueRuntimeActive,
                 sessionStarted,
                 currentInstrumentId,
+                sessionRunId,
                 currentHolderUserId,
                 joinedQueue,
                 joinedHistory,
@@ -589,6 +648,7 @@ namespace Thesis.Orchestration.Backends.Mirror
             queueRuntimeActive = false;
             sessionStarted = false;
             currentInstrumentId = string.Empty;
+            sessionRunId = string.Empty;
             currentHolderUserId = "None";
             timeoutTimer = 0f;
             hasInitializedForCurrentSession = false;

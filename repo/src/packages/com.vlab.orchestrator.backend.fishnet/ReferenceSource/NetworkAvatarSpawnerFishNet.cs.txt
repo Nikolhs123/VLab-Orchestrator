@@ -26,6 +26,12 @@ namespace Thesis.Orchestration.Backends.FishNet
         private readonly Dictionary<int, NetworkObject> spawnedAvatars = new();
         private bool callbacksBound;
 
+        private bool ManagerReady =>
+            networkManager != null &&
+            networkManager.Initialized &&
+            networkManager.ClientManager != null &&
+            networkManager.ServerManager != null;
+
         private void Awake()
         {
             if (Instance != null && Instance != this)
@@ -78,7 +84,7 @@ namespace Thesis.Orchestration.Backends.FishNet
         {
             ResolveReferences();
 
-            if (networkManager == null || !networkManager.IsServerStarted)
+            if (!ManagerReady || !networkManager.IsServerStarted)
             {
                 Log("Local spawn request skipped because only the FishNet server/host can spawn avatars.");
                 return;
@@ -98,7 +104,7 @@ namespace Thesis.Orchestration.Backends.FishNet
             ResolveReferences();
             RegisterSharedAvatarPrefabIfNeeded();
 
-            if (networkManager == null || !networkManager.IsServerStarted)
+            if (!ManagerReady || !networkManager.IsServerStarted)
                 return;
 
             if (sessionOrchestrator != null && sessionOrchestrator.CurrentPlayers != null)
@@ -120,7 +126,7 @@ namespace Thesis.Orchestration.Backends.FishNet
         {
             ResolveReferences();
 
-            if (networkManager == null || networkManager.SpawnablePrefabs == null)
+            if (!ManagerReady || networkManager.SpawnablePrefabs == null)
                 return;
 
             NetworkObject prefabToRegister = ResolveAvatarPrefab();
@@ -144,7 +150,7 @@ namespace Thesis.Orchestration.Backends.FishNet
             PruneSpawnedAvatars();
             RegisterSharedAvatarPrefabIfNeeded();
 
-            if (networkManager == null || !networkManager.IsServerStarted)
+            if (!ManagerReady || !networkManager.IsServerStarted)
             {
                 Log($"Spawn skipped for Client_{clientId} because FishNet server is not running.");
                 return;
@@ -154,7 +160,6 @@ namespace Thesis.Orchestration.Backends.FishNet
                 cachedAvatar != null &&
                 cachedAvatar.IsSpawned)
             {
-                Log($"Spawn skipped for Client_{clientId} because a cached avatar is still spawned.");
                 return;
             }
 
@@ -202,7 +207,7 @@ namespace Thesis.Orchestration.Backends.FishNet
 
         private void TryBindCallbacks()
         {
-            if (callbacksBound || networkManager == null)
+            if (callbacksBound || !ManagerReady)
                 return;
 
             networkManager.ServerManager.OnRemoteConnectionState += HandleRemoteConnectionState;
@@ -211,10 +216,11 @@ namespace Thesis.Orchestration.Backends.FishNet
 
         private void UnbindCallbacks()
         {
-            if (!callbacksBound || networkManager == null)
+            if (!callbacksBound)
                 return;
 
-            networkManager.ServerManager.OnRemoteConnectionState -= HandleRemoteConnectionState;
+            if (networkManager != null && networkManager.ServerManager != null)
+                networkManager.ServerManager.OnRemoteConnectionState -= HandleRemoteConnectionState;
             callbacksBound = false;
         }
 

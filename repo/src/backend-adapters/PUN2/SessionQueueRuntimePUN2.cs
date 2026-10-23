@@ -37,6 +37,7 @@ namespace Thesis.Orchestration.Backends.PUN2
 
         private bool queueRuntimeActive;
         private string currentInstrumentId = string.Empty;
+        private string sessionRunId = string.Empty;
         private string currentHolderUserId = "None";
         private readonly List<string> currentQueueSnapshot = new();
         private readonly List<string> replicatedHistorySnapshot = new();
@@ -61,6 +62,7 @@ namespace Thesis.Orchestration.Backends.PUN2
 
         public bool QueueRuntimeActive => queueRuntimeActive;
         public string CurrentInstrumentId => currentInstrumentId;
+        public string SessionRunId => sessionRunId;
         public string CurrentHolderUserId => string.IsNullOrWhiteSpace(currentHolderUserId) ? "None" : currentHolderUserId;
         public List<string> CurrentQueueSnapshot => new(currentQueueSnapshot);
         public List<string> ReplicatedHistorySnapshot => new(replicatedHistorySnapshot);
@@ -84,15 +86,19 @@ namespace Thesis.Orchestration.Backends.PUN2
             ResetRuntimeState(clearSharedUserCardStats: true, notifyListeners: false);
         }
 
-        private void OnEnable()
+        // base.OnEnable/OnDisable register/unregister the PUN callback target; without them the
+        // OnJoinedRoom/OnLeftRoom/OnDisconnected/OnRoomPropertiesUpdate overrides never run.
+        public override void OnEnable()
         {
+            base.OnEnable();
             ResolveReferences();
             TryBindEvents();
         }
 
-        private void OnDisable()
+        public override void OnDisable()
         {
             UnbindEvents();
+            base.OnDisable();
         }
 
         private void OnDestroy()
@@ -122,6 +128,9 @@ namespace Thesis.Orchestration.Backends.PUN2
             {
                 TryInitializeQueueRuntime();
             }
+
+            if (PhotonNetwork.IsMasterClient && queueRuntimeActive && !sharedLogic.IsInitialized)
+                RestoreQueueAuthorityAfterMasterSwitch();
 
             if (!PhotonNetwork.IsMasterClient || !queueRuntimeActive || !sharedLogic.IsInitialized)
                 return;
@@ -315,6 +324,7 @@ namespace Thesis.Orchestration.Backends.PUN2
             }
 
             currentInstrumentId = instrumentDefinition.ObjectId;
+            sessionRunId = SessionRunIdentity.NewId();
             currentHolderUserId = "None";
 
             IEnumerable<string> userIds = ResolveSessionOrchestrator() != null
@@ -332,6 +342,40 @@ namespace Thesis.Orchestration.Backends.PUN2
 
             TLog("QueueRuntimeInitialized", GetLocalUserId(), currentInstrumentId, "PUN2 queue runtime initialized on master.");
             BroadcastState("Queue runtime initialized.");
+        }
+
+        // Only the original master initializes the shared logic; other participants hold the replicated
+        // snapshot. After a master switch the new master would otherwise keep an active but frozen queue
+        // (departed holder never removed, requests and timeouts ignored).
+        private void RestoreQueueAuthorityAfterMasterSwitch()
+        {
+            if (string.IsNullOrWhiteSpace(currentInstrumentId) || ResolveSessionOrchestrator() == null)
+                return;
+
+            string holderBefore = CurrentHolderUserId;
+            List<string> activeUserIds = sessionOrchestrator.CurrentPlayers
+                .Where(p => p != null)
+                .OrderBy(p => p.ActorNumber)
+                .Select(ConvertPlayerToUserId)
+                .ToList();
+
+            sharedLogic.RestoreFromReplicatedState(
+                currentInstrumentId,
+                activeUserIds,
+                holderBefore,
+                currentQueueSnapshot,
+                replicatedHistorySnapshot);
+            timeoutTimer = 0f;
+
+            TLog("QueueAuthorityMigrated", GetLocalUserId(), currentInstrumentId,
+                $"Restored queue authority from replicated state after master switch: holder={holderBefore} queue={string.Join("|", currentQueueSnapshot)}.");
+
+            sharedLogic.SyncUsers(
+                currentInstrumentId,
+                activeUserIds,
+                removedHolderId => sharedLogic.ReleaseAccess(removedHolderId, currentInstrumentId));
+
+            BroadcastState("Queue authority restored after master switch.");
         }
 
         private void CheckTimeoutForCurrentInstrument()
@@ -372,6 +416,7 @@ namespace Thesis.Orchestration.Backends.PUN2
                 RpcTarget.AllBuffered,
                 queueRuntimeActive,
                 currentInstrumentId,
+                sessionRunId,
                 currentHolderUserId,
                 joinedQueue,
                 joinedHistory);
@@ -450,6 +495,7 @@ namespace Thesis.Orchestration.Backends.PUN2
         {
             queueRuntimeActive = false;
             currentInstrumentId = string.Empty;
+            sessionRunId = string.Empty;
             currentHolderUserId = "None";
             timeoutTimer = 0f;
             hasInitializedForCurrentSession = false;
@@ -470,9 +516,12 @@ namespace Thesis.Orchestration.Backends.PUN2
         }
 
         [PunRPC]
-        private void RPC_RequestAccess(string userId)
+        private void RPC_RequestAccess(string userId, PhotonMessageInfo info)
         {
             if (!PhotonNetwork.IsMasterClient || !queueRuntimeActive || !sharedLogic.IsInitialized)
+                return;
+
+            if (!QueueRequestIdentity.Accept(userId, ConvertPlayerToUserId(info.Sender), "RequestAccess", currentInstrumentId))
                 return;
 
             // Record the request on the authoritative side so wait times, fairness, and counts are consistent.
@@ -489,9 +538,12 @@ namespace Thesis.Orchestration.Backends.PUN2
         }
 
         [PunRPC]
-        private void RPC_ReleaseAccess(string userId)
+        private void RPC_ReleaseAccess(string userId, PhotonMessageInfo info)
         {
             if (!PhotonNetwork.IsMasterClient || !queueRuntimeActive || !sharedLogic.IsInitialized)
+                return;
+
+            if (!QueueRequestIdentity.Accept(userId, ConvertPlayerToUserId(info.Sender), "ReleaseAccess", currentInstrumentId))
                 return;
 
             QueueDecision decision = sharedLogic.ReleaseAccess(userId, currentInstrumentId);
@@ -508,9 +560,12 @@ namespace Thesis.Orchestration.Backends.PUN2
         }
 
         [PunRPC]
-        private void RPC_Heartbeat(string userId)
+        private void RPC_Heartbeat(string userId, PhotonMessageInfo info)
         {
             if (!PhotonNetwork.IsMasterClient || !queueRuntimeActive || !sharedLogic.IsInitialized)
+                return;
+
+            if (!QueueRequestIdentity.Accept(userId, ConvertPlayerToUserId(info.Sender), "Heartbeat", currentInstrumentId))
                 return;
 
             sharedLogic.RegisterHeartbeat(userId, currentInstrumentId);
@@ -538,12 +593,14 @@ namespace Thesis.Orchestration.Backends.PUN2
         private void RPC_ApplyReplicatedState(
             bool runtimeActive,
             string instrumentId,
+            string replicatedSessionRunId,
             string holderUserId,
             string joinedQueue,
             string joinedHistory)
         {
             queueRuntimeActive = runtimeActive;
             currentInstrumentId = instrumentId;
+            sessionRunId = replicatedSessionRunId ?? string.Empty;
             currentHolderUserId = string.IsNullOrWhiteSpace(holderUserId) ? "None" : holderUserId;
 
             currentQueueSnapshot.Clear();

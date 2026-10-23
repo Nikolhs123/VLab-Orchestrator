@@ -10,10 +10,19 @@ VLab Orchestrator is a Unity research-software framework for applying one
 session, shared-access, authority-transfer, synchronization, telemetry, and
 evaluation model across heterogeneous multiplayer networking backends.
 
-This repository is the rights-cleared research-software artifact prepared for
-the VLab Orchestrator SoftwareX submission. It is intentionally separate from
+This repository is the rights-cleared research-software artifact for
+VLab Orchestrator. It is intentionally separate from
 the complete XR2Learn V-Lab development project and contains no original V-Lab
 media or redistributed networking SDK source.
+
+## Publication Preparation History
+
+The manuscript and artifact were initially prepared for SoftwareX. The SoftwareX
+submission was not completed because funding for its article processing charge
+was unavailable. The manuscript was subsequently adapted and submitted to IEEE
+Access. SoftwareX-named planning documents are retained as historical preparation
+records, not as evidence of a completed SoftwareX submission or publication.
+See [publication history](docs/publication/PUBLICATION_HISTORY.md).
 
 ![Dependency-free VLab Orchestrator showcase](docs/images/showcase.png)
 
@@ -251,7 +260,7 @@ rights-cleared samples, tests, documentation, and protocol definitions.
 - [Prefab and synchronization contracts](docs/architecture/PREFAB_CONTRACTS.md)
 - [Backend installation boundaries](docs/installation/BACKENDS.md)
 - [Illustrated installation and evaluation guide](docs/installation/ILLUSTRATED_GUIDE.md)
-- [SoftwareX submission plan](docs/publication/SOFTWAREX_SUBMISSION_PLAN.md)
+- [Historical SoftwareX preparation plan](docs/publication/SOFTWAREX_SUBMISSION_PLAN.md)
 - [Research protocol](docs/publication/BENCHMARK_PROTOCOL_AND_REPRODUCIBILITY.md)
 - [Asset provenance](ASSET_PROVENANCE.md)
 - [Third-party notices](THIRD_PARTY_NOTICES.md)

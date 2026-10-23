@@ -1,6 +1,8 @@
 using System;
 using System.IO;
 using Thesis.Orchestration.Analytics;
+using Thesis.Orchestration.EditorTools;
+using Thesis.Orchestration.Runtime;
 using UnityEngine;
 
 #if UNITY_EDITOR
@@ -13,6 +15,7 @@ namespace Thesis.Orchestration.Telemetry
     public class EvaluationMetricsManager : MonoBehaviour
     {
         private const string ExportManifestFileName = "export_manifest.csv";
+        private const string ParticipantExportsFolderName = "ParticipantExports";
 
         public static EvaluationMetricsManager Instance { get; private set; }
 
@@ -25,6 +28,8 @@ namespace Thesis.Orchestration.Telemetry
         [SerializeField] private SessionLifecycleTracker sessionLifecycleTracker;
         [SerializeField] private QueueTransitionRecorder queueTransitionRecorder;
         [SerializeField] private AuthorityTransferRecorder authorityTransferRecorder;
+        [SerializeField] private NativeAuthorityObservationRecorder nativeAuthorityObservationRecorder;
+        [SerializeField] private TransformObservationRecorder transformObservationRecorder;
         [SerializeField] private RuntimePerformanceSampler runtimePerformanceSampler;
         [SerializeField] private ScenarioMetricsRecorder scenarioMetricsRecorder;
         [SerializeField] private AiDecisionRecorder aiDecisionRecorder;
@@ -43,6 +48,8 @@ namespace Thesis.Orchestration.Telemetry
         public SessionLifecycleTracker SessionLifecycleTracker => sessionLifecycleTracker;
         public QueueTransitionRecorder QueueTransitionRecorder => queueTransitionRecorder;
         public AuthorityTransferRecorder AuthorityTransferRecorder => authorityTransferRecorder;
+        public NativeAuthorityObservationRecorder NativeAuthorityObservationRecorder => nativeAuthorityObservationRecorder;
+        public TransformObservationRecorder TransformObservationRecorder => transformObservationRecorder;
         public RuntimePerformanceSampler RuntimePerformanceSampler => runtimePerformanceSampler;
         public ScenarioMetricsRecorder ScenarioMetricsRecorder => scenarioMetricsRecorder;
         public AiDecisionRecorder AiDecisionRecorder => aiDecisionRecorder;
@@ -102,6 +109,12 @@ namespace Thesis.Orchestration.Telemetry
             if (authorityTransferRecorder == null)
                 authorityTransferRecorder = GetOrAdd<AuthorityTransferRecorder>();
 
+            if (nativeAuthorityObservationRecorder == null)
+                nativeAuthorityObservationRecorder = GetOrAdd<NativeAuthorityObservationRecorder>();
+
+            if (transformObservationRecorder == null)
+                transformObservationRecorder = GetOrAdd<TransformObservationRecorder>();
+
             if (runtimePerformanceSampler == null)
                 runtimePerformanceSampler = GetOrAdd<RuntimePerformanceSampler>();
 
@@ -149,6 +162,16 @@ namespace Thesis.Orchestration.Telemetry
                 authorityTransferRecorder = AuthorityTransferRecorder.Instance;
             if (authorityTransferRecorder == null)
                 authorityTransferRecorder = GetComponent<AuthorityTransferRecorder>();
+
+            if (nativeAuthorityObservationRecorder == null)
+                nativeAuthorityObservationRecorder = NativeAuthorityObservationRecorder.Instance;
+            if (nativeAuthorityObservationRecorder == null)
+                nativeAuthorityObservationRecorder = GetComponent<NativeAuthorityObservationRecorder>();
+
+            if (transformObservationRecorder == null)
+                transformObservationRecorder = TransformObservationRecorder.Instance;
+            if (transformObservationRecorder == null)
+                transformObservationRecorder = GetComponent<TransformObservationRecorder>();
 
             if (runtimePerformanceSampler == null)
                 runtimePerformanceSampler = RuntimePerformanceSampler.Instance;
@@ -207,6 +230,8 @@ namespace Thesis.Orchestration.Telemetry
             sessionLifecycleTracker?.ClearAll();
             queueTransitionRecorder?.ClearAll();
             authorityTransferRecorder?.ClearAll();
+            nativeAuthorityObservationRecorder?.ClearAll();
+            transformObservationRecorder?.ClearAll();
             runtimePerformanceSampler?.ClearAll();
             scenarioMetricsRecorder?.ClearAll();
             aiDecisionRecorder?.ClearAll();
@@ -214,7 +239,10 @@ namespace Thesis.Orchestration.Telemetry
             Log("Cleared all evaluation recorders.");
         }
 
-        public string ExportAll()
+        // participantUserId == null: coordinator export under <root>/<backend>/<scenario>, which the
+        // analyzers read. Otherwise a participant-local export of this process's own observations under
+        // <root>/ParticipantExports/<backend>/<scenario>, kept out of the coordinator run directories.
+        public string ExportAll(string participantUserId = null, string localUserId = null)
         {
             ResolveReferences();
 
@@ -224,7 +252,15 @@ namespace Thesis.Orchestration.Telemetry
                 return null;
             }
 
-            string requestedRunFolder = runContext.GetRunFolderPath();
+            bool participantExport = !string.IsNullOrWhiteSpace(participantUserId);
+            string requestedRunFolder = participantExport
+                ? Path.Combine(
+                    EvaluationExportPathUtility.GetExportsRoot(),
+                    ParticipantExportsFolderName,
+                    runContext.BackendName,
+                    runContext.ScenarioId,
+                    $"Run_{runContext.RunStartUtc:yyyyMMdd_HHmmss_fff}_{SanitizeFileName(participantUserId)}")
+                : runContext.GetRunFolderPath();
             string stagingRoot = Path.Combine(EvaluationExportPathUtility.GetExportsRoot(), ".staging");
             string pendingId = Guid.NewGuid().ToString("N").Substring(0, 8);
             string stagingFolder = Path.Combine(
@@ -240,6 +276,8 @@ namespace Thesis.Orchestration.Telemetry
                 sessionLifecycleTracker?.SaveSessionLifecycleCsvToFile(Path.Combine(stagingFolder, "session_lifecycle.csv"));
                 queueTransitionRecorder?.SaveQueueTransitionsCsvToFile(Path.Combine(stagingFolder, "queue_transitions.csv"));
                 authorityTransferRecorder?.SaveAuthorityTransfersCsvToFile(Path.Combine(stagingFolder, "authority_transfers.csv"));
+                nativeAuthorityObservationRecorder?.SaveObservationsCsvToFile(Path.Combine(stagingFolder, "native_authority_observations.csv"));
+                transformObservationRecorder?.SaveObservationsCsvToFile(Path.Combine(stagingFolder, "transform_observations.csv"));
                 runtimePerformanceSampler?.SaveRuntimePerformanceCsvToFile(Path.Combine(stagingFolder, "runtime_performance.csv"));
                 runtimePerformanceSampler?.SaveRuntimePerformanceSummaryCsvToFile(Path.Combine(stagingFolder, "runtime_performance_summary.csv"));
                 scenarioMetricsRecorder?.SaveScenarioEventsCsvToFile(Path.Combine(stagingFolder, "scenario_events.csv"));
@@ -254,6 +292,16 @@ namespace Thesis.Orchestration.Telemetry
                 usageTimingTracker?.SaveInstrumentStatsCsvToFile(Path.Combine(stagingFolder, "instrument_stats.csv"));
 
                 evaluationSummaryBuilder?.SaveAllSummariesToFolder(stagingFolder);
+                LatchSessionRunIdFromRuntime();
+                SaveParticipantIdentity(
+                    Path.Combine(stagingFolder, "participant_identity.csv"),
+                    participantExport ? participantUserId : localUserId,
+                    participantExport ? "Participant" : "Coordinator");
+                ExecutionManifestWriter.Write(
+                    Path.Combine(stagingFolder, "execution_manifest.csv"),
+                    runContext,
+                    participantExport ? participantUserId : localUserId,
+                    participantExport ? "Participant" : "Coordinator");
 
                 string runFolder = GetAvailableRunFolder(requestedRunFolder);
                 PublishStagedExport(stagingFolder, runFolder);
@@ -285,6 +333,35 @@ namespace Thesis.Orchestration.Telemetry
                     this);
                 return null;
             }
+        }
+
+        // Fallback for exports taken while the queue is still live but no queue update was observed since the
+        // last BeginNewRun; the adapters latch the id on every queue state update.
+        private void LatchSessionRunIdFromRuntime()
+        {
+            if (runContext == null || !string.IsNullOrEmpty(runContext.SessionRunId))
+                return;
+
+            OrchestrationProjectConfig config =
+                Resources.Load<OrchestrationProjectConfig>("AIMultiplayerAssistant/OrchestrationProjectConfig");
+            IOrchestrationBackendRuntime runtime = config != null ? BackendRuntimeResolver.Resolve(config.backendType) : null;
+            runContext.ObserveSessionRunId(runtime?.QueueView?.SessionRunId);
+        }
+
+        private void SaveParticipantIdentity(string filePath, string observerUserId, string exportRole)
+        {
+            string Q(string value) => string.IsNullOrEmpty(value) ? "" : $"\"{value.Replace("\"", "\"\"")}\"";
+            File.WriteAllText(filePath,
+                "run_id,backend,scenario_id,session_name,session_run_id,observer_user_id,export_role,machine_name,process_id,exported_utc\n" +
+                $"{Q(runContext.RunId)},{Q(runContext.BackendName)},{Q(runContext.ScenarioId)},{Q(runContext.SessionName)},{Q(runContext.SessionRunId)},{Q(observerUserId ?? "Unknown")}," +
+                $"{exportRole},{Q(Environment.MachineName)},{System.Diagnostics.Process.GetCurrentProcess().Id},{DateTime.UtcNow:O}\n");
+        }
+
+        private static string SanitizeFileName(string value)
+        {
+            foreach (char invalid in Path.GetInvalidFileNameChars())
+                value = value.Replace(invalid, '_');
+            return value;
         }
 
         private static void PublishStagedExport(string stagingFolder, string runFolder)

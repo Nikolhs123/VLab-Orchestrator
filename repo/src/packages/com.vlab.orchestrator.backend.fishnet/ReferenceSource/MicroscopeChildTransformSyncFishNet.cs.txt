@@ -41,6 +41,7 @@ namespace Thesis.Orchestration.Backends.FishNet
         {
             base.OnStartClient();
             RefreshControlledChildren();
+            SharedObjectSyncRegistry.ResolveOrCreate()?.DiscoverSceneObjects();
         }
 
         private void Update()

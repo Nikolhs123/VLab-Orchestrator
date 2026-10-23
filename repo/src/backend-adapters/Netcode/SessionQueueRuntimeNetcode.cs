@@ -64,6 +64,11 @@ namespace Thesis.Orchestration.Backends.Netcode
             NetworkVariableReadPermission.Everyone,
             NetworkVariableWritePermission.Server);
 
+        private readonly NetworkVariable<FixedString64Bytes> sessionRunIdNetworked = new(
+            default,
+            NetworkVariableReadPermission.Everyone,
+            NetworkVariableWritePermission.Server);
+
         private readonly NetworkVariable<FixedString64Bytes> currentHolderUserIdNetworked = new(
             default,
             NetworkVariableReadPermission.Everyone,
@@ -92,6 +97,7 @@ namespace Thesis.Orchestration.Backends.Netcode
         public bool SessionStarted => IsSpawned && sessionStartedNetworked.Value;
         public bool QueueRuntimeActive => IsSpawned && queueRuntimeActiveNetworked.Value;
         public string CurrentInstrumentId => IsSpawned ? currentInstrumentIdNetworked.Value.ToString() : string.Empty;
+        public string SessionRunId => IsSpawned ? sessionRunIdNetworked.Value.ToString() : string.Empty;
         public string CurrentHolderUserId => NormalizeHolderId(IsSpawned ? currentHolderUserIdNetworked.Value.ToString() : string.Empty);
         public List<string> CurrentQueueSnapshot => IsSpawned ? SplitJoinedString(currentQueueJoinedNetworked.Value.ToString()) : new List<string>();
         public List<string> ReplicatedHistorySnapshot => IsSpawned ? SplitJoinedString(replicatedHistoryJoinedNetworked.Value.ToString()) : new List<string>();
@@ -211,12 +217,14 @@ namespace Thesis.Orchestration.Backends.Netcode
             UnbindEvents();
         }
 
-        private void OnDestroy()
+        public override void OnDestroy()
         {
             UnbindEvents();
 
             if (Instance == this)
                 Instance = null;
+
+            base.OnDestroy();
         }
 
         public void RequestBeginSessionForLocalPlayer()
@@ -280,9 +288,13 @@ namespace Thesis.Orchestration.Backends.Netcode
         }
 
         [ServerRpc(RequireOwnership = false)]
-        private void RequestBeginSessionServerRpc(string requestingUserId)
+        private void RequestBeginSessionServerRpc(string requestingUserId, ServerRpcParams rpcParams = default)
         {
             if (!IsServer || sessionStartedNetworked.Value)
+                return;
+
+            if (!QueueRequestIdentity.Accept(requestingUserId, ConvertClientToUserId(rpcParams.Receive.SenderClientId),
+                    "BeginSession", CurrentInstrumentId))
                 return;
 
             sessionStartedNetworked.Value = true;
@@ -295,9 +307,13 @@ namespace Thesis.Orchestration.Backends.Netcode
         }
 
         [ServerRpc(RequireOwnership = false)]
-        private void RequestAccessServerRpc(string userId, string instrumentId)
+        private void RequestAccessServerRpc(string userId, string instrumentId, ServerRpcParams rpcParams = default)
         {
             if (!IsServer || !queueRuntimeActiveNetworked.Value || sharedLogic == null || !sharedLogic.IsInitialized)
+                return;
+
+            if (!QueueRequestIdentity.Accept(userId, ConvertClientToUserId(rpcParams.Receive.SenderClientId),
+                    "RequestAccess", instrumentId))
                 return;
 
             sharedLogic.RecordQueueRequest(
@@ -312,9 +328,13 @@ namespace Thesis.Orchestration.Backends.Netcode
         }
 
         [ServerRpc(RequireOwnership = false)]
-        private void ReleaseAccessServerRpc(string userId, string instrumentId)
+        private void ReleaseAccessServerRpc(string userId, string instrumentId, ServerRpcParams rpcParams = default)
         {
             if (!IsServer || !queueRuntimeActiveNetworked.Value || sharedLogic == null || !sharedLogic.IsInitialized)
+                return;
+
+            if (!QueueRequestIdentity.Accept(userId, ConvertClientToUserId(rpcParams.Receive.SenderClientId),
+                    "ReleaseAccess", instrumentId))
                 return;
 
             QueueDecision decision = sharedLogic.ReleaseAccess(userId, instrumentId);
@@ -328,9 +348,13 @@ namespace Thesis.Orchestration.Backends.Netcode
         }
 
         [ServerRpc(RequireOwnership = false)]
-        private void HeartbeatServerRpc(string userId, string instrumentId)
+        private void HeartbeatServerRpc(string userId, string instrumentId, ServerRpcParams rpcParams = default)
         {
             if (!IsServer || !queueRuntimeActiveNetworked.Value || sharedLogic == null || !sharedLogic.IsInitialized)
+                return;
+
+            if (!QueueRequestIdentity.Accept(userId, ConvertClientToUserId(rpcParams.Receive.SenderClientId),
+                    "Heartbeat", instrumentId))
                 return;
 
             sharedLogic.RegisterHeartbeat(userId, instrumentId);
@@ -438,6 +462,7 @@ namespace Thesis.Orchestration.Backends.Netcode
 
             string instrumentId = instrumentDefinition.ObjectId;
             currentInstrumentIdNetworked.Value = new FixedString64Bytes(instrumentId);
+            sessionRunIdNetworked.Value = new FixedString64Bytes(SessionRunIdentity.NewId());
 
             IEnumerable<string> userIds = GetActiveUserIds();
             sharedLogic.Initialize(instrumentId, userIds);

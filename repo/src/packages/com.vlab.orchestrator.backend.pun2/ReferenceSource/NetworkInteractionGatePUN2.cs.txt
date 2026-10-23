@@ -17,6 +17,8 @@ namespace Thesis.Orchestration.Backends.PUN2
         [Header("Options")]
         [SerializeField] private bool controlCollidersToo = true;
         [SerializeField] private bool requestOwnershipAutomatically = true;
+        [Tooltip("Minimum seconds between automatic ownership requests; permission is evaluated every frame.")]
+        [SerializeField] private float ownershipRequestCooldownSeconds = 0.5f;
         [SerializeField] private bool allowInteractionWhenOffline = true;
 
         [Header("Automatic Heartbeat")]
@@ -38,6 +40,7 @@ namespace Thesis.Orchestration.Backends.PUN2
         [SerializeField] private bool verboseLogs = true;
 
         private Collider[] cachedColliders;
+        private float lastOwnershipRequestTime = -999f;
 
         private void Awake()
         {
@@ -92,8 +95,12 @@ namespace Thesis.Orchestration.Backends.PUN2
             if (photonView.IsMine)
                 return true;
 
-            if (requestOwnershipAutomatically)
+            // Without a cooldown this issued one takeover per frame until ownership arrived, so the
+            // number of redundant requests per handoff depended on the frame rate.
+            if (requestOwnershipAutomatically &&
+                Time.unscaledTime - lastOwnershipRequestTime >= ownershipRequestCooldownSeconds)
             {
+                lastOwnershipRequestTime = Time.unscaledTime;
                 photonView.RequestOwnership();
                 Log($"Requested ownership for child '{name}', ViewID={photonView.ViewID}");
             }

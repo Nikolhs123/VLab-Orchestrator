@@ -1,0 +1,13 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net8.0</TargetFramework>
+    <EnableDefaultCompileItems>false</EnableDefaultCompileItems>
+  </PropertyGroup>
+  <ItemGroup>
+    <Compile Include="Program.cs" />
+    <Compile Include="../../repo/src/framework/Telemetry/AuthorityTransferRecorder.cs" Link="AuthorityTransferRecorder.cs" />
+    <Compile Include="../../repo/src/framework/Telemetry/AuthorityMeasurementTracker.cs" Link="AuthorityMeasurementTracker.cs" />
+    <Compile Include="../../repo/src/framework/Telemetry/NativeAuthorityObservationRecorder.cs" Link="NativeAuthorityObservationRecorder.cs" />
+  </ItemGroup>
+</Project>

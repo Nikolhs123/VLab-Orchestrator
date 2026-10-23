@@ -9,10 +9,29 @@ using UnityEngine;
 
 namespace Thesis.Orchestration.Backends.Fusion
 {
-    public class FusionBackendRuntimeAdapter : MonoBehaviour, IOrchestrationBackendRuntime, IOrchestrationSessionView, IOrchestrationQueueView
+    public class FusionBackendRuntimeAdapter : MonoBehaviour, IOrchestrationBackendRuntime, IOrchestrationSessionView, IOrchestrationQueueView, IExecutionEnvironmentDescriptor
     {
         [SerializeField] private SessionOrchestratorFusion session;
         [SerializeField] private SessionQueueRuntimeFusion queue;
+
+        public void DescribeExecutionEnvironment(IDictionary<string, string> into)
+        {
+            into["sdk"] = "Photon Fusion";
+            into["sdk_assembly_version"] = typeof(NetworkRunner).Assembly.GetName().Version.ToString();
+            into["room_discovery"] = "session lobby list";
+            NetworkRunner runner = ResolveSession() != null ? session.Runner : null;
+            if (runner == null)
+            {
+                into["runner"] = "unavailable";
+                return;
+            }
+
+            into["game_mode"] = runner.GameMode.ToString();
+            into["topology"] = runner.Topology.ToString();
+            into["tick_rate_hz"] = runner.TickRate.ToString();
+            into["session_region"] = runner.SessionInfo != null && runner.SessionInfo.IsValid ? runner.SessionInfo.Region : "unavailable";
+            into["is_shared_mode_master_client"] = runner.IsSharedModeMasterClient.ToString();
+        }
 
         public OrchestrationBackendType BackendType => OrchestrationBackendType.Fusion;
         public IOrchestrationSessionView SessionView => this;
@@ -69,6 +88,7 @@ namespace Thesis.Orchestration.Backends.Fusion
 
         public bool QueueRuntimeActive => ResolveQueue() != null && queue.QueueRuntimeActive;
         public string CurrentInstrumentId => ResolveQueue() != null ? queue.CurrentInstrumentId : string.Empty;
+        public string SessionRunId => ResolveQueue() != null ? queue.SessionRunId : string.Empty;
         public string CurrentHolderUserId => ResolveQueue() != null ? queue.CurrentHolderUserId : "None";
         public IReadOnlyList<string> CurrentQueueSnapshot => ResolveQueue() != null ? queue.CurrentQueueSnapshot : Array.Empty<string>();
 
@@ -185,7 +205,16 @@ namespace Thesis.Orchestration.Backends.Fusion
         public void JoinRoom(string roomName) => ResolveSession()?.JoinRoom(roomName);
         public void LeaveRoom() => ResolveSession()?.LeaveRoom();
         public void BeginSession() => ResolveSession()?.BeginSession();
-        public bool RoomExists(string roomName) => ResolveSession() != null && session.AvailableSessions.Any(s => s != null && s.IsValid && s.Name == roomName);
+        // The session list is only maintained while in the session lobby; outside it the answer is not known.
+        public RoomLookupResult LookupRoom(string roomName)
+        {
+            if (ResolveSession() == null || !session.IsInLobby)
+                return RoomLookupResult.Unavailable;
+
+            return session.AvailableSessions.Any(s => s != null && s.IsValid && s.Name == roomName)
+                ? RoomLookupResult.Exists
+                : RoomLookupResult.NotFound;
+        }
 
         public void RequestAccessForLocalPlayer() => ResolveQueue()?.RequestAccessForLocalPlayer();
         public void ReleaseAccessForLocalPlayer() => ResolveQueue()?.ReleaseAccessForLocalPlayer();
@@ -198,7 +227,11 @@ namespace Thesis.Orchestration.Backends.Fusion
         private void HandleRoomBrowserUpdated(List<SessionInfo> _) => RoomsChanged?.Invoke();
         private void HandlePlayerListUpdated(List<PlayerRef> _) => PlayersChanged?.Invoke();
         private void HandleStatusMessage(string msg) => StatusMessage?.Invoke(msg);
-        private void HandleQueueRuntimeUpdated() => RuntimeStateChanged?.Invoke();
+        private void HandleQueueRuntimeUpdated()
+        {
+            EvaluationRunContext.Instance?.ObserveSessionRunId(SessionRunId);
+            RuntimeStateChanged?.Invoke();
+        }
 
         private string ResolvePlayerDisplayName(string userId, string fallback)
         {

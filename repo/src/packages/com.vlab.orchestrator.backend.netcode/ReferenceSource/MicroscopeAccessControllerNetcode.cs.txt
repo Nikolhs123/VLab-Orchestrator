@@ -17,14 +17,18 @@ namespace Thesis.Orchestration.Backends.Netcode
         [SerializeField] private bool requestOwnershipForControlledChildren = false;
         [SerializeField] private bool releaseOwnershipWhenAccessRevoked = true;
         [SerializeField] private float ownershipRequestCooldownSeconds = 0.35f;
+        [Tooltip("Seconds before a pending authority measurement is closed as TimedOut. 0 disables the timeout.")]
+        [SerializeField] private float authorityMeasurementTimeoutSeconds = 10f;
 
+        private const string RootObjectKey = "root";
         private float lastOwnershipRequestTime = -999f;
         private float lastOwnershipReleaseTime = -999f;
-        private bool logicalAuthorityTransferPending;
+        private AuthorityMeasurementTracker authorityMeasurement;
 
         private void Awake()
         {
             BaseAwake();
+            authorityMeasurement = new AuthorityMeasurementTracker(() => AuthorityTransferRecorder.Instance);
 
             if (queueRuntime == null)
                 queueRuntime = SessionQueueRuntimeNetcode.Instance;
@@ -61,6 +65,22 @@ namespace Thesis.Orchestration.Backends.Netcode
         {
             BaseUpdate();
             RefreshPendingLogicalAuthorityTransfer();
+            SampleNativeAuthority();
+        }
+
+        // Independent per-frame read of SDK ownership; not derived from request/completion events.
+        private void SampleNativeAuthority()
+        {
+            bool spawned = rootNetworkObject != null && rootNetworkObject.IsSpawned;
+            NativeAuthorityObservationRecorder.Instance?.Observe(
+                GetTrackedObjectId(),
+                GetLocalUserId(),
+                GetCurrentHolderUserId(),
+                GetCurrentOwnerId(),
+                HasLocalAccess,
+                spawned && rootNetworkObject.IsOwner,
+                IsQueueRuntimeActive(),
+                "Root NetworkObject.OwnerClientId; local=IsOwner");
         }
 
         protected override bool CanEvaluateAccessState()
@@ -119,13 +139,18 @@ namespace Thesis.Orchestration.Backends.Netcode
 
             lastOwnershipRequestTime = Time.time;
 
-            AuthorityTransferRecorder.Instance?.RecordTransferRequested(
-                GetTrackedObjectId(),
-                GetLocalUserId(),
-                GetCurrentOwnerId(),
-                "Netcode logical microscope ownership request initiated.");
+            // A retry while pending re-sends the native request inside the same measurement.
+            if (!authorityMeasurement.IsPending)
+            {
+                authorityMeasurement.Begin(
+                    GetTrackedObjectId(),
+                    GetLocalUserId(),
+                    GetCurrentOwnerId(),
+                    new[] { RootObjectKey },
+                    Time.realtimeSinceStartupAsDouble,
+                    "Netcode logical microscope ownership request initiated.");
+            }
 
-            logicalAuthorityTransferPending = true;
             ownershipRelay.RequestOwnershipForLocalClient();
         }
 
@@ -155,14 +180,17 @@ namespace Thesis.Orchestration.Backends.Netcode
             if (Time.time - lastOwnershipReleaseTime < ownershipRequestCooldownSeconds)
                 return;
 
-            logicalAuthorityTransferPending = false;
             lastOwnershipReleaseTime = Time.time;
             ownershipRelay.ReleaseOwnershipForLocalClient();
         }
 
         private void RefreshPendingLogicalAuthorityTransfer()
         {
-            if (!logicalAuthorityTransferPending)
+            if (!authorityMeasurement.IsPending)
+                return;
+
+            if (authorityMeasurement.CheckTimeout(Time.realtimeSinceStartupAsDouble, authorityMeasurementTimeoutSeconds,
+                    "Netcode ownership was not observed as local before the measurement timeout."))
                 return;
 
             Unity.Netcode.NetworkManager manager = ownershipRelay != null && ownershipRelay.NetworkManager != null
@@ -180,33 +208,25 @@ namespace Thesis.Orchestration.Backends.Netcode
                 return;
             }
 
-            logicalAuthorityTransferPending = false;
-            AuthorityTransferRecorder recorder = AuthorityTransferRecorder.Instance;
-            recorder?.RecordTransferCompleted(
-                GetTrackedObjectId(),
-                GetLocalUserId(),
-                GetCurrentOwnerId(),
-                true,
-                "Netcode logical microscope ownership transfer completed when local client became owner.");
+            authorityMeasurement.ObserveLocal(RootObjectKey, "Root NetworkObject.OwnerClientId equals LocalClientId.");
+            if (!authorityMeasurement.TryResolve(
+                    GetCurrentOwnerId(),
+                    "Netcode logical microscope ownership transfer completed when local client became owner.",
+                    out _,
+                    out string measurementId))
+                return;
 
+            AuthorityTransferRecorder recorder = AuthorityTransferRecorder.Instance;
             if (!manager.IsServer && recorder != null)
             {
                 ResolveQueueRuntime();
-                string rowJson = recorder.BuildMostRecentCompletedRowJson(GetTrackedObjectId(), GetLocalUserId());
-                queueRuntime?.SubmitAuthorityTransferSnapshot(rowJson);
+                queueRuntime?.SubmitAuthorityTransferSnapshot(recorder.BuildCompletedRowJson(measurementId));
             }
         }
 
         private void CancelPendingLogicalAuthorityTransfer(string details)
         {
-            if (!logicalAuthorityTransferPending)
-                return;
-
-            logicalAuthorityTransferPending = false;
-            AuthorityTransferRecorder.Instance?.CancelPendingTransfer(
-                GetTrackedObjectId(),
-                GetLocalUserId(),
-                details);
+            authorityMeasurement?.Cancel(details);
         }
 
         private void ResolveQueueRuntime()

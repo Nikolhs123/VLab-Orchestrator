@@ -11,6 +11,8 @@ namespace Thesis.Orchestration.Backends.Netcode
 {
     public class SessionOrchestratorNetcode : MonoBehaviour
     {
+        private const string LocalLifecyclePlaceholderId = "Netcode_LocalClient";
+
         public static SessionOrchestratorNetcode Instance { get; private set; }
 
         [Header("Netcode Settings")]
@@ -35,8 +37,10 @@ namespace Thesis.Orchestration.Backends.Netcode
         private bool localSessionStarted;
         private bool hasAutoConnectAttempted;
         private bool hasReportedMissingRuntimeReferences;
+        private float nextLifecycleReplayTime;
         private string currentSessionName = "None";
         private SessionQueueRuntimeNetcode spawnedQueueRuntime;
+        private readonly SessionLifecycleTracker.SessionLifecycleRow bufferedLifecycleRow = new();
 
         public Unity.Netcode.NetworkManager NetworkManager => networkManager;
         public bool IsConnectedToMasterServer => transportPrepared || (networkManager != null && networkManager.IsListening);
@@ -99,6 +103,8 @@ namespace Thesis.Orchestration.Backends.Netcode
         {
             ResolveReferences();
             TryBindCallbacks();
+            ReplayBufferedLifecycleRowIfPossible();
+            TryMergeLifecycleLocalPlaceholder();
             RegisterQueueRuntimePrefabIfNeeded();
 
             bool started = SessionStarted;
@@ -106,6 +112,10 @@ namespace Thesis.Orchestration.Backends.Netcode
                 return;
 
             localSessionStarted = started;
+
+            if (localSessionStarted && !IsMasterClient)
+                RecordSessionStartVisible();
+
             OnSessionStateChanged?.Invoke(localSessionStarted);
         }
 
@@ -129,7 +139,7 @@ namespace Thesis.Orchestration.Backends.Netcode
             if (!ResolveReferences())
                 return;
 
-            SessionLifecycleTracker.Instance?.MarkConnectStarted(GetLocalUserId());
+            RecordConnectStarted();
 
             transportPrepared = true;
             cachedSessions.Clear();
@@ -139,7 +149,7 @@ namespace Thesis.Orchestration.Backends.Netcode
             RaiseStatus("Netcode transport prepared. Direct-connect mode ready. Enter the room name manually to create or join.");
             OnConnectedToServerEvent?.Invoke();
             OnSessionBrowserUpdated?.Invoke(new List<string>(cachedSessions));
-            SessionLifecycleTracker.Instance?.MarkConnectSucceeded(GetLocalUserId());
+            RecordConnectSucceeded();
             TLog("ConnectRequested", GetLocalUserId(), "None", "Prepared NGO direct-connect transport.");
         }
 
@@ -166,7 +176,7 @@ namespace Thesis.Orchestration.Backends.Netcode
             NetworkAvatarSpawnerNetcode.Instance?.RegisterSharedAvatarPrefabIfNeeded();
             RegisterQueueRuntimePrefabIfNeeded();
 
-            SessionLifecycleTracker.Instance?.MarkCreateStarted(GetLocalUserId());
+            RecordCreateStarted();
 
             if (!networkManager.StartHost())
             {
@@ -176,6 +186,7 @@ namespace Thesis.Orchestration.Backends.Netcode
 
             transportPrepared = true;
             currentSessionName = sessionName;
+            TryMergeLifecycleLocalPlaceholder();
             cachedSessions.Clear();
             RefreshPlayerCache();
             EnsureQueueRuntimeSpawned();
@@ -183,7 +194,7 @@ namespace Thesis.Orchestration.Backends.Netcode
             RaiseStatus($"Created Netcode session '{sessionName}' on port {port}.");
             OnRoomCreated?.Invoke(sessionName);
             OnSessionBrowserUpdated?.Invoke(new List<string>(cachedSessions));
-            SessionLifecycleTracker.Instance?.MarkCreateSucceeded(GetLocalUserId());
+            RecordCreateSucceeded();
             TLog("CreateRoomRequested", GetLocalUserId(), sessionName, $"Created direct-connect NGO session on port {port}.");
         }
 
@@ -210,7 +221,7 @@ namespace Thesis.Orchestration.Backends.Netcode
             NetworkAvatarSpawnerNetcode.Instance?.RegisterSharedAvatarPrefabIfNeeded();
             RegisterQueueRuntimePrefabIfNeeded();
 
-            SessionLifecycleTracker.Instance?.MarkJoinStarted(GetLocalUserId());
+            RecordJoinStarted();
 
             if (!networkManager.StartClient())
             {
@@ -249,13 +260,13 @@ namespace Thesis.Orchestration.Backends.Netcode
         {
             EnsureQueueRuntimeSpawned();
             SessionQueueRuntimeNetcode runtime = SessionQueueRuntimeNetcode.Instance;
-            SessionLifecycleTracker.Instance?.MarkSessionStartPressed(GetLocalUserId());
+            RecordSessionStartPressed();
 
             if (runtime != null && runtime.IsSpawned)
             {
                 runtime.RequestBeginSessionForLocalPlayer();
                 RaiseStatus("Requested session start.");
-                SessionLifecycleTracker.Instance?.MarkSessionStartVisible(GetLocalUserId());
+                RecordSessionStartVisible();
                 NetworkAvatarSpawnerNetcode.Instance?.RequestSpawnForLocalClient();
                 return;
             }
@@ -264,11 +275,6 @@ namespace Thesis.Orchestration.Backends.Netcode
             RaiseStatus("Session started locally (runtime not found).");
             OnSessionStateChanged?.Invoke(localSessionStarted);
             NetworkAvatarSpawnerNetcode.Instance?.RequestSpawnForLocalClient();
-        }
-
-        public bool SessionExists(string roomName)
-        {
-            return false;
         }
 
         public void ConfigureRuntime(Unity.Netcode.NetworkManager manager, UnityTransport transport, SessionQueueRuntimeNetcode runtimeTemplate)
@@ -307,6 +313,127 @@ namespace Thesis.Orchestration.Backends.Netcode
                 return ConvertClientToUserId(networkManager.LocalClientId);
 
             return "UnknownUser";
+        }
+
+        private string GetLifecycleClientId()
+        {
+            return networkManager != null && networkManager.IsListening
+                ? GetLocalUserId()
+                : LocalLifecyclePlaceholderId;
+        }
+
+        private void RecordConnectStarted()
+        {
+            bufferedLifecycleRow.connectStartUtc = LifecycleTimestampNow();
+            ReplayBufferedLifecycleRowIfPossible(force: true);
+        }
+
+        private void RecordConnectSucceeded()
+        {
+            bufferedLifecycleRow.connectSuccessUtc = LifecycleTimestampNow();
+            bufferedLifecycleRow.connectLatencyMs = ComputeLifecycleLatency(
+                bufferedLifecycleRow.connectStartUtc,
+                bufferedLifecycleRow.connectSuccessUtc);
+            ReplayBufferedLifecycleRowIfPossible(force: true);
+        }
+
+        private void RecordCreateStarted()
+        {
+            bufferedLifecycleRow.createStartUtc = LifecycleTimestampNow();
+            ReplayBufferedLifecycleRowIfPossible(force: true);
+        }
+
+        private void RecordCreateSucceeded()
+        {
+            bufferedLifecycleRow.createSuccessUtc = LifecycleTimestampNow();
+            bufferedLifecycleRow.createLatencyMs = ComputeLifecycleLatency(
+                bufferedLifecycleRow.createStartUtc,
+                bufferedLifecycleRow.createSuccessUtc);
+            ReplayBufferedLifecycleRowIfPossible(force: true);
+        }
+
+        private void RecordJoinStarted()
+        {
+            bufferedLifecycleRow.joinStartUtc = LifecycleTimestampNow();
+            ReplayBufferedLifecycleRowIfPossible(force: true);
+        }
+
+        private void RecordJoinSucceeded()
+        {
+            bufferedLifecycleRow.joinSuccessUtc = LifecycleTimestampNow();
+            bufferedLifecycleRow.joinLatencyMs = ComputeLifecycleLatency(
+                bufferedLifecycleRow.joinStartUtc,
+                bufferedLifecycleRow.joinSuccessUtc);
+            ReplayBufferedLifecycleRowIfPossible(force: true);
+        }
+
+        private void RecordSessionStartPressed()
+        {
+            bufferedLifecycleRow.sessionStartPressedUtc = LifecycleTimestampNow();
+            ReplayBufferedLifecycleRowIfPossible(force: true);
+        }
+
+        private void RecordSessionStartVisible()
+        {
+            bufferedLifecycleRow.sessionStartVisibleUtc = LifecycleTimestampNow();
+            bufferedLifecycleRow.sessionStartVisibleDelayMs = ComputeLifecycleLatency(
+                bufferedLifecycleRow.sessionStartPressedUtc,
+                bufferedLifecycleRow.sessionStartVisibleUtc);
+            ReplayBufferedLifecycleRowIfPossible(force: true);
+        }
+
+        private void ReplayBufferedLifecycleRowIfPossible(bool force = false)
+        {
+            SessionLifecycleTracker tracker = SessionLifecycleTracker.Instance;
+            if (tracker == null || (!force && Time.unscaledTime < nextLifecycleReplayTime))
+                return;
+
+            nextLifecycleReplayTime = Time.unscaledTime + 0.5f;
+            string clientId = GetLifecycleClientId();
+            bufferedLifecycleRow.clientId = clientId;
+            tracker.ApplyRowJson(JsonUtility.ToJson(bufferedLifecycleRow), clientId);
+
+            if (!SessionLifecycleTracker.IsPlaceholderClientId(clientId))
+            {
+                tracker.MergeClientRow(LocalLifecyclePlaceholderId, clientId);
+                tracker.MergePlaceholderRowsInto(clientId);
+                tracker.EnsureClientObserved(clientId);
+            }
+        }
+
+        private static string LifecycleTimestampNow()
+        {
+            return DateTime.UtcNow.ToString("o");
+        }
+
+        private static double ComputeLifecycleLatency(string startUtc, string endUtc)
+        {
+            if (!DateTime.TryParse(
+                    startUtc,
+                    null,
+                    System.Globalization.DateTimeStyles.RoundtripKind,
+                    out DateTime start) ||
+                !DateTime.TryParse(
+                    endUtc,
+                    null,
+                    System.Globalization.DateTimeStyles.RoundtripKind,
+                    out DateTime end))
+            {
+                return 0d;
+            }
+
+            return Math.Max(0d, (end - start).TotalMilliseconds);
+        }
+
+        private void TryMergeLifecycleLocalPlaceholder()
+        {
+            if (networkManager == null || !networkManager.IsListening)
+                return;
+
+            string localUserId = GetLocalUserId();
+            SessionLifecycleTracker.Instance?.MergeClientRow(LocalLifecyclePlaceholderId, localUserId);
+            SessionLifecycleTracker.Instance?.MergePlaceholderRowsInto(localUserId);
+            SessionLifecycleTracker.Instance?.EnsureClientObserved(localUserId);
         }
 
         private bool ResolveReferences()
@@ -367,9 +494,10 @@ namespace Thesis.Orchestration.Backends.Netcode
             if (clientId != networkManager.LocalClientId)
                 return;
 
+            TryMergeLifecycleLocalPlaceholder();
             RaiseStatus($"Joined Netcode session '{currentSessionName}'.");
             OnRoomJoined?.Invoke(currentSessionName);
-            SessionLifecycleTracker.Instance?.MarkJoinSucceeded(GetLocalUserId());
+            RecordJoinSucceeded();
         }
 
         private void HandleClientDisconnected(ulong clientId)

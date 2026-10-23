@@ -2,6 +2,7 @@ using Fusion;
 using Fusion.Sockets;
 using System;
 using System.Collections.Generic;
+using System.Linq;
 using System.Threading.Tasks;
 using Thesis.Orchestration.SharedSync;
 using Thesis.Orchestration.Telemetry;
@@ -41,10 +42,14 @@ namespace Thesis.Orchestration.Backends.Fusion
         private bool localSessionStarted;
         private bool isInLobby;
         private SessionQueueRuntimeFusion spawnedQueueRuntime;
+        private bool sceneLoadDone;
 
         public NetworkRunner Runner => runner;
         public bool IsConnectedToMasterServer => runner != null && runner.IsCloudReady;
-        public bool IsInRoom => runner != null && runner.IsRunning;
+        // runner.IsRunning becomes true while StartGame is still in progress, and the session scene load that
+        // follows despawns objects spawned before it; callers that act on "in room" (BeginSession, avatar and
+        // queue-runtime spawn) failed or lost state in that window.
+        public bool IsInRoom => runner != null && runner.IsRunning && currentSessionName != "None" && sceneLoadDone;
         public bool IsInLobby => isInLobby;
         public bool IsMasterClient => runner != null && (runner.IsServer || runner.IsSharedModeMasterClient);
 
@@ -282,6 +287,7 @@ namespace Thesis.Orchestration.Backends.Fusion
             isInLobby = false;
             hasAutoConnectAttempted = false;
             spawnedQueueRuntime = null;
+            sceneLoadDone = false;
 
             RaiseStatus("Left Fusion session.");
             OnPlayerListUpdated?.Invoke(new List<PlayerRef>(cachedPlayers));
@@ -410,11 +416,25 @@ namespace Thesis.Orchestration.Backends.Fusion
 
         private void EnsureQueueRuntimeSpawned()
         {
-            if (!spawnQueueRuntimeAutomatically || runner == null || !runner.IsRunning || !IsMasterClient)
+            // A spawn attempted inside StartGame (OnPlayerJoined) threw and left a half-created instance that
+            // claimed SessionQueueRuntimeFusion.Instance, so the real runtime destroyed itself as a "duplicate".
+            if (!spawnQueueRuntimeAutomatically || !IsInRoom || !IsMasterClient)
                 return;
 
-            if (spawnedQueueRuntime != null && spawnedQueueRuntime.Object != null && spawnedQueueRuntime.Object.IsValid)
+            // F14: this is reached from CreateRoom, OnPlayerJoined (which in Shared mode runs inside StartGame) and
+            // BeginSession. A spawned runtime is not yet IsValid on the first of those calls, so the validity check
+            // alone spawned up to three runtimes. Any existing instance (including one inherited through
+            // master-client migration) counts.
+            if (spawnedQueueRuntime != null)
                 return;
+
+            SessionQueueRuntimeFusion existing = FindObjectsByType<SessionQueueRuntimeFusion>(FindObjectsSortMode.None)
+                .FirstOrDefault(runtime => runtime != null && runtime.Object != null && runtime.Object.IsValid);
+            if (existing != null)
+            {
+                spawnedQueueRuntime = existing;
+                return;
+            }
 
             SessionQueueRuntimeFusion template = ResolveQueueRuntimeTemplate();
             if (template == null)
@@ -518,6 +538,7 @@ namespace Thesis.Orchestration.Backends.Fusion
             isInLobby = false;
             hasAutoConnectAttempted = false;
             spawnedQueueRuntime = null;
+            sceneLoadDone = false;
 
             string msg = $"Disconnected from Fusion. Reason: {reason}";
             RaiseStatus(msg);
@@ -575,6 +596,7 @@ namespace Thesis.Orchestration.Backends.Fusion
             isInLobby = false;
             hasAutoConnectAttempted = false;
             spawnedQueueRuntime = null;
+            sceneLoadDone = false;
 
             string msg = $"Fusion shutdown: {shutdownReason}";
             RaiseStatus(msg);
@@ -586,8 +608,20 @@ namespace Thesis.Orchestration.Backends.Fusion
                 DisposeRunner(runner);
         }
 
-        void INetworkRunnerCallbacks.OnSceneLoadStart(NetworkRunner runner) { }
-        void INetworkRunnerCallbacks.OnSceneLoadDone(NetworkRunner runner) { }
+        void INetworkRunnerCallbacks.OnSceneLoadStart(NetworkRunner runner)
+        {
+            sceneLoadDone = false;
+            Log("Fusion scene load started.");
+        }
+
+        // StartGame loads the session scene; network objects spawned before this completes were despawned by
+        // the load (observed: the queue runtime spawned and despawned twice, losing session state on the host).
+        void INetworkRunnerCallbacks.OnSceneLoadDone(NetworkRunner runner)
+        {
+            sceneLoadDone = true;
+            Log("Fusion scene load done.");
+            EnsureQueueRuntimeSpawned();
+        }
         void INetworkRunnerCallbacks.OnInput(NetworkRunner runner, NetworkInput input) { }
         void INetworkRunnerCallbacks.OnInputMissing(NetworkRunner runner, PlayerRef player, NetworkInput input) { }
         void INetworkRunnerCallbacks.OnConnectRequest(NetworkRunner runner, NetworkRunnerCallbackArgs.ConnectRequest request, byte[] token) { }

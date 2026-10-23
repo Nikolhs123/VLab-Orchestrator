@@ -277,11 +277,6 @@ namespace Thesis.Orchestration.Backends.Netcode
             NetworkAvatarSpawnerNetcode.Instance?.RequestSpawnForLocalClient();
         }
 
-        public bool SessionExists(string roomName)
-        {
-            return false;
-        }
-
         public void ConfigureRuntime(Unity.Netcode.NetworkManager manager, UnityTransport transport, SessionQueueRuntimeNetcode runtimeTemplate)
         {
             networkManager = manager;

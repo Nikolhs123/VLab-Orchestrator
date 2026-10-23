@@ -1,6 +1,7 @@
 using System.Collections.Generic;
 using FishNet.Object;
 using Thesis.Orchestration.Backends.FishNet;
+using Thesis.Orchestration.SharedSync;
 using Thesis.Orchestration.Telemetry;
 using UnityEngine;
 
@@ -71,6 +72,7 @@ namespace Thesis.Orchestration.Backends.FishNet.StandaloneShared
         public override void OnStartClient()
         {
             base.OnStartClient();
+            SharedObjectSyncRegistry.ResolveOrCreate()?.DiscoverSceneObjects();
 
             if (IsOwner)
                 SubmitStateIfChanged(force: true);

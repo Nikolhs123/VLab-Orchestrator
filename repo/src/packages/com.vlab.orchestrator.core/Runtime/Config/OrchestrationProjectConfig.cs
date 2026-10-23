@@ -36,7 +36,7 @@ namespace VLabOrchestrator.Runtime
         menuName = "VLab Orchestrator/Project Config")]
     public sealed class OrchestrationProjectConfig : ScriptableObject
     {
-        public const string CanonicalBenchmarkProtocolVersion = "1.5";
+        public const string CanonicalBenchmarkProtocolVersion = "1.6";
 
         [Header("Backend")]
         public OrchestrationBackendType backendType = OrchestrationBackendType.UnityNetcode;

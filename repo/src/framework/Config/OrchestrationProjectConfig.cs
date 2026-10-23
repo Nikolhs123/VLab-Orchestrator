@@ -129,7 +129,7 @@ namespace Thesis.Orchestration.EditorTools
         public bool automatedScenarioAutoBeginSession = true;
         public bool automatedScenarioAutoExportOnComplete = false;
         public string automatedScenarioIdOverride = "";
-        public string automatedScenarioProtocolVersion = "1.5";
+        public string automatedScenarioProtocolVersion = "1.6";
         [Min(2)] public int automatedScenarioExpectedParticipants = 2;
         [Min(1)] public int automatedScenarioRepeatCount = 3;
         [Min(0f)] public float automatedScenarioWarmupSeconds = 5f;
@@ -147,6 +147,27 @@ namespace Thesis.Orchestration.EditorTools
         public bool automatedScenarioValidateFinalRotation = true;
         [Min(0f)] public float automatedScenarioFinalRotationSettleSeconds = 1f;
         [Min(0.01f)] public float automatedScenarioRotationToleranceDegrees = 2f;
+        [Tooltip("W03 access-control probes: participants without the expected authority write a probe pitch " +
+                 "to the controlled object, bypassing the interaction gate. Uses a separate scenario id. " +
+                 "Also enabled by the -vlabAccessProbes command-line flag.")]
+        public bool automatedScenarioAccessControlProbes = false;
+
+        public const string AccessControlProbeScenarioSuffix = "_W03AccessProbes";
+
+        public bool AccessControlProbesEnabled
+        {
+            get
+            {
+                if (automatedScenarioAccessControlProbes)
+                    return true;
+                foreach (string argument in System.Environment.GetCommandLineArgs())
+                {
+                    if (string.Equals(argument, "-vlabAccessProbes", System.StringComparison.OrdinalIgnoreCase))
+                        return true;
+                }
+                return false;
+            }
+        }
 
         [Header("Backend Evaluation (TOPSIS)")]
         [Tooltip("Leave empty to use the newest benchmark scenario shared by all five backends.")]
@@ -178,7 +199,32 @@ namespace Thesis.Orchestration.EditorTools
         [Header("Debug")]
         public bool verboseLogs = true;
 
+        // W06/W11/W12 lifecycle case selected with -vlabLifecycle <case>; empty when not requested.
+        public string LifecycleCase
+        {
+            get
+            {
+                string[] arguments = System.Environment.GetCommandLineArgs();
+                for (int i = 0; i < arguments.Length - 1; i++)
+                {
+                    if (string.Equals(arguments[i], "-vlabLifecycle", System.StringComparison.OrdinalIgnoreCase))
+                        return arguments[i + 1];
+                }
+                return string.Empty;
+            }
+        }
+
+        // Probe and lifecycle runs get distinct scenario ids so they are never pooled with normal runs.
         public string ResolveAutomatedScenarioId()
+        {
+            if (!string.IsNullOrWhiteSpace(LifecycleCase))
+                return SanitizeScenarioId("L_" + LifecycleCase);
+
+            string scenarioId = ResolveBaseAutomatedScenarioId();
+            return AccessControlProbesEnabled ? scenarioId + AccessControlProbeScenarioSuffix : scenarioId;
+        }
+
+        private string ResolveBaseAutomatedScenarioId()
         {
             if (!string.IsNullOrWhiteSpace(automatedScenarioIdOverride))
                 return SanitizeScenarioId(automatedScenarioIdOverride);

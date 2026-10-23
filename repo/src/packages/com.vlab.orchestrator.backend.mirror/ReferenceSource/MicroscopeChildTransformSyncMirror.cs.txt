@@ -36,6 +36,24 @@ namespace Thesis.Orchestration.Backends.Mirror
             base.OnStartClient();
             ResolveQueueRuntime();
             RefreshControlledChildren();
+            SharedObjectSyncRegistry.ResolveOrCreate()?.DiscoverSceneObjects();
+
+            // ClientRpcs are not buffered: a late-joining client requests the last authoritative snapshot.
+            if (!isServer)
+                CmdRequestSnapshot();
+        }
+
+        [global::Mirror.Command(requiresAuthority = false)]
+        private void CmdRequestSnapshot(global::Mirror.NetworkConnectionToClient sender = null)
+        {
+            if (sender != null && !string.IsNullOrEmpty(lastBroadcastSnapshot))
+                TargetApplySnapshot(sender, lastBroadcastSnapshot);
+        }
+
+        [global::Mirror.TargetRpc]
+        private void TargetApplySnapshot(global::Mirror.NetworkConnectionToClient target, string snapshot)
+        {
+            ApplySnapshot(snapshot);
         }
 
         private void Update()

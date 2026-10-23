@@ -35,6 +35,16 @@ namespace Thesis.Orchestration.Runtime.Scenarios
         private Quaternion benchmarkInitialLocalRotation;
         private Quaternion benchmarkExpectedFinalLocalRotation;
         private bool benchmarkRotationCaptured;
+        private const float TransformSampleIntervalSeconds = 0.1f;
+        private int observedPhaseIndex;
+        private int observedPhaseCycle;
+        private string observedPhaseRole = "";
+        private string observedPhaseActor = "";
+        private Coroutine transformSamplerCoroutine;
+        private const float AccessProbePitchDegrees = 20f;
+        private const float AccessProbeCheckDelaySeconds = 1f;
+        private bool accessProbesEnabled;
+        private int accessProbeSequence;
         private bool infoLogsSuppressed;
         private LogType previousLogFilter;
 
@@ -46,6 +56,10 @@ namespace Thesis.Orchestration.Runtime.Scenarios
         private void OnEnable()
         {
             if (projectConfig == null || !projectConfig.enableAutomatedBenchmarkScenario)
+                return;
+
+            // A lifecycle case (LifecycleScenarioDriver) replaces the benchmark scenario in this process.
+            if (!string.IsNullOrWhiteSpace(projectConfig.LifecycleCase))
                 return;
 
             scenarioCoroutine = StartCoroutine(RunScenarioWhenReady());
@@ -83,6 +97,9 @@ namespace Thesis.Orchestration.Runtime.Scenarios
 
             if (!ResolveRuntime())
                 yield break;
+
+            if (EvaluationRunContext.Instance != null)
+                EvaluationRunContext.Instance.SessionName = sessionView?.CurrentRoomName ?? "";
 
             recorder?.MarkScenarioStarted(
                 projectConfig.automatedScenarioMode.ToString(),
@@ -183,12 +200,22 @@ namespace Thesis.Orchestration.Runtime.Scenarios
             }
             else if (projectConfig.automatedScenarioAutoExportOnComplete)
             {
-                SetBenchmarkUiStatus("BENCHMARK CLIENT STEPS COMPLETE - wait for the master export.");
+                // Each non-coordinator participant also keeps its own locally observed records
+                // (native authority, transforms, lifecycle) instead of relying only on imports.
+                string participantExport = EvaluationMetricsManager.ResolveOrCreate(this)?.ExportAll(
+                    string.IsNullOrWhiteSpace(sessionView?.LocalUserId) ? "UnknownParticipant" : sessionView.LocalUserId);
+                SetBenchmarkUiStatus(string.IsNullOrWhiteSpace(participantExport)
+                    ? "BENCHMARK CLIENT STEPS COMPLETE - participant export FAILED - wait for the master export."
+                    : $"BENCHMARK CLIENT STEPS COMPLETE - participant data exported - wait for the master export.\n{participantExport}");
             }
         }
 
         private IEnumerator RunOwnershipPingPongClosedLoop()
         {
+            ApplyAccessProbe(0, "NoHolderBeforeFirstGrant");
+            if (accessProbesEnabled)
+                yield return new WaitForSecondsRealtime(AccessProbeCheckDelaySeconds + 0.5f);
+
             for (int cycle = 1; cycle <= projectConfig.automatedScenarioRepeatCount; cycle++)
             {
                 SetBenchmarkUiStatus(
@@ -265,6 +292,8 @@ namespace Thesis.Orchestration.Runtime.Scenarios
             if (!grantObserved)
                 yield break;
 
+            BeginObservedPhase(cycle, role, actorUserId);
+
             if (projectConfig.automatedScenarioPreQueueNextUser && hasNextActor)
             {
                 if (isLocalNextActor && !IsUserQueuedOrHolding(nextActorUserId))
@@ -298,13 +327,29 @@ namespace Thesis.Orchestration.Runtime.Scenarios
                     () => BuildQueueDebugValue());
             }
 
+            if (!isLocalActor && accessProbesEnabled)
+            {
+                // Probe after the actor's manipulation window so the probe is not hidden by it.
+                float probeDelay = Mathf.Min(
+                    projectConfig.automatedScenarioHoldSeconds * 0.85f,
+                    projectConfig.automatedScenarioManipulationStartDelaySeconds +
+                    projectConfig.automatedScenarioManipulationDurationSeconds + 0.5f);
+                StartCoroutine(ApplyAccessProbeAfter(probeDelay, cycle, "NonHolderDuringOtherHold", actorUserId));
+                StartCoroutine(ApplyProbeWhenLocalBecomesHolder(cycle));
+            }
+
             if (isLocalActor)
                 yield return HoldAndManipulateDuringPhase(cycle, role, actorUserId);
             else if (projectConfig.automatedScenarioHoldSeconds > 0f)
                 yield return WaitWhileHolder(role, actorUserId, projectConfig.automatedScenarioHoldSeconds + projectConfig.automatedScenarioStepTimeoutSeconds);
 
+            EndObservedPhase();
+
             if (isLocalActor)
             {
+                if (accessProbesEnabled)
+                    StartCoroutine(ApplyFormerHolderProbeAfterRelease(cycle, actorUserId));
+
                 recorder?.RecordEvent(
                     cycle,
                     "Ownership",
@@ -499,6 +544,8 @@ namespace Thesis.Orchestration.Runtime.Scenarios
             if (!holderObserved)
                 yield break;
 
+            BeginObservedPhase(cycle, role, actorUserId);
+
             recorder?.RecordEvent(
                 cycle,
                 "Contention",
@@ -520,6 +567,8 @@ namespace Thesis.Orchestration.Runtime.Scenarios
                     role,
                     actorUserId,
                     projectConfig.automatedScenarioHoldSeconds + projectConfig.automatedScenarioStepTimeoutSeconds);
+
+            EndObservedPhase();
 
             if (IsLocalUser(actorUserId))
             {
@@ -847,6 +896,15 @@ namespace Thesis.Orchestration.Runtime.Scenarios
                         benchmarkExpectedFinalLocalRotation *= phaseDelta;
 
                     benchmarkRotationCaptured = true;
+                    observedPhaseIndex = 0;
+                    observedPhaseCycle = 0;
+                    observedPhaseRole = "";
+                    observedPhaseActor = "";
+                    if (transformSamplerCoroutine != null)
+                        StopCoroutine(transformSamplerCoroutine);
+                    transformSamplerCoroutine = StartCoroutine(SampleTransformDuringMeasuredWindow());
+                    accessProbesEnabled = projectConfig.AccessControlProbesEnabled;
+                    accessProbeSequence = 0;
                 }
             }
 
@@ -926,6 +984,7 @@ namespace Thesis.Orchestration.Runtime.Scenarios
                 : float.PositiveInfinity;
             bool converged = target != null && benchmarkRotationCaptured && angleError <= tolerance;
             recorder?.RecordFinalRotationOutcome(angleError, converged);
+            RecordTransformObservation("Final", benchmarkExpectedFinalLocalRotation);
 
             recorder?.RecordAssertion(
                 projectConfig.automatedScenarioRepeatCount,
@@ -939,6 +998,204 @@ namespace Thesis.Orchestration.Runtime.Scenarios
                     ? $"Target={BuildTransformPath(target)}; Initial={benchmarkInitialLocalRotation.eulerAngles}; Expected={benchmarkExpectedFinalLocalRotation.eulerAngles}; Actual={target.localRotation.eulerAngles}"
                     : $"Target '{projectConfig.automatedScenarioManipulatedChildName}' was not found.",
                 requiredForValidity: false);
+        }
+
+        // ---- Per-phase transform observations (both participants; R2-C09) ----
+        // Phase k (1-based) is expected to end at Initial * Delta^k. Boundary rows do not wait or
+        // change protocol timing; PhaseEnd is taken at the end of the hold interval, before release.
+
+        private Quaternion ExpectedRotationAfterPhases(int phases)
+        {
+            Quaternion expected = benchmarkInitialLocalRotation;
+            Quaternion delta = Quaternion.Euler(projectConfig.automatedScenarioManipulationEulerDelta);
+            for (int i = 0; i < phases; i++)
+                expected *= delta;
+            return expected;
+        }
+
+        private void BeginObservedPhase(int cycle, string role, string actorUserId)
+        {
+            observedPhaseIndex++;
+            observedPhaseCycle = cycle;
+            observedPhaseRole = role ?? "";
+            observedPhaseActor = actorUserId ?? "";
+            RecordTransformObservation("PhaseStart", ExpectedRotationAfterPhases(observedPhaseIndex - 1));
+        }
+
+        private void EndObservedPhase()
+        {
+            RecordTransformObservation("PhaseEnd", ExpectedRotationAfterPhases(observedPhaseIndex));
+        }
+
+        private void RecordTransformObservation(string kind, Quaternion expected)
+        {
+            Transform target = benchmarkManipulationTarget;
+            if (!benchmarkRotationCaptured || target == null || TransformObservationRecorder.Instance == null)
+                return;
+
+            ResolveRuntime();
+            TransformObservationRecorder.Instance.Record(
+                kind,
+                observedPhaseCycle,
+                observedPhaseIndex,
+                observedPhaseRole,
+                observedPhaseActor,
+                sessionView?.LocalUserId ?? "",
+                queueView?.CurrentHolderUserId ?? "None",
+                BuildTransformPath(target),
+                expected,
+                target.localRotation);
+        }
+
+        private IEnumerator SampleTransformDuringMeasuredWindow()
+        {
+            var wait = new WaitForSecondsRealtime(TransformSampleIntervalSeconds);
+            while (benchmarkRotationCaptured && benchmarkManipulationTarget != null && !scenarioCompleted)
+            {
+                // Expected value of a sample is the end state of the current phase; samples taken while
+                // the actor is still rotating are labeled with that phase and interpreted in analysis.
+                RecordTransformObservation("Sample", ExpectedRotationAfterPhases(observedPhaseIndex));
+                yield return wait;
+            }
+
+            transformSamplerCoroutine = null;
+        }
+
+        // ---- W03 access-control probes (R2-C07) ----
+        // A probe bypasses the interaction gate and writes a pitch rotation directly to the local
+        // replica of the controlled object, at defined access states. Whether the write is overwritten
+        // locally (ProbeCheck on the prober) and whether it reaches the other participant (its
+        // transform samples) shows what the network layer, not only the gate, enforces. Legitimate
+        // manipulation only changes yaw, so a pitch near the probe angle identifies a probe.
+
+        private void ApplyAccessProbe(int cycle, string condition)
+        {
+            Transform target = benchmarkManipulationTarget;
+            if (!accessProbesEnabled || target == null)
+                return;
+
+            ResolveRuntime();
+            string localUserId = sessionView?.LocalUserId ?? "";
+            string holder = queueView?.CurrentHolderUserId ?? "None";
+            string instrumentId = queueView?.CurrentInstrumentId ?? "";
+            string nativeState = "unobserved";
+            if (NativeAuthorityObservationRecorder.Instance != null &&
+                NativeAuthorityObservationRecorder.Instance.TryGetLatest(instrumentId, out NativeAuthorityObservationRecorder.ObservationRow latest))
+            {
+                nativeState = $"localNativeAuthority={latest.localNativeAuthority} nativeOwner={latest.nativeOwner}";
+            }
+
+            BaseInteractionGate gate = target.GetComponentInParent<BaseInteractionGate>();
+            string gateState = gate != null ? gate.InteractionPermitted.ToString() : "NoGate";
+            Quaternion beforeProbe = target.localRotation;
+            int probeId = ++accessProbeSequence;
+
+            // Unique signature per probe: User1 rotates about local X (pitch), others about local Z (roll),
+            // by 12 + 2*probeId degrees. With Unity's ZXY Euler order, yaw*Rx(p) has Euler x == p and
+            // yaw*Rz(p) has Euler z == p, so the other replica can be checked for this exact value.
+            bool pitchAxis = string.Equals(localRole, "User1", StringComparison.OrdinalIgnoreCase);
+            float probeAngle = AccessProbePitchDegrees * 0.6f + 2f * probeId;
+            Quaternion probeRotation = pitchAxis
+                ? Quaternion.Euler(probeAngle, 0f, 0f)
+                : Quaternion.Euler(0f, 0f, probeAngle);
+            target.localRotation = beforeProbe * probeRotation;
+
+            recorder?.RecordEvent(
+                cycle,
+                "AccessProbe",
+                localRole,
+                localUserId,
+                "AccessProbeApplied",
+                0d,
+                "None",
+                holder,
+                true,
+                $"probe={probeId} condition={condition} axis={(pitchAxis ? "x" : "z")} " +
+                $"angleDeg={probeAngle.ToString("0.###", System.Globalization.CultureInfo.InvariantCulture)} holder={holder} " +
+                $"localIsHolder={string.Equals(holder, localUserId, StringComparison.OrdinalIgnoreCase)} " +
+                $"{nativeState} gatePermitted={gateState}");
+            RecordTransformObservation($"Probe{probeId}:{condition}", beforeProbe);
+            StartCoroutine(CheckAccessProbe(cycle, probeId, condition, beforeProbe, probeRotation, pitchAxis));
+        }
+
+        // After the check delay: records whether the probe remained on the local replica, then removes it
+        // locally if it did, so later phases start from the protocol state on this replica. A probe that
+        // already reached other replicas through native authority is not undone; that is the finding.
+        private IEnumerator CheckAccessProbe(int cycle, int probeId, string condition, Quaternion beforeProbe,
+            Quaternion probeRotation, bool pitchAxis)
+        {
+            yield return new WaitForSecondsRealtime(AccessProbeCheckDelaySeconds);
+            Transform target = benchmarkManipulationTarget;
+            if (target == null)
+                yield break;
+
+            Vector3 residualEuler = (Quaternion.Inverse(beforeProbe) * target.localRotation).eulerAngles;
+            float pitchResidual = Mathf.Abs(Mathf.DeltaAngle(0f, pitchAxis ? residualEuler.x : residualEuler.z));
+            RecordTransformObservation($"ProbeCheck{probeId}:{condition}", beforeProbe);
+            bool cleanedUp = false;
+            if (pitchResidual > AccessProbePitchDegrees * 0.25f)
+            {
+                target.localRotation = target.localRotation * Quaternion.Inverse(probeRotation);
+                cleanedUp = true;
+            }
+            recorder?.RecordEvent(
+                cycle,
+                "AccessProbe",
+                localRole,
+                sessionView?.LocalUserId ?? "",
+                "AccessProbeChecked",
+                AccessProbeCheckDelaySeconds * 1000d,
+                "None",
+                queueView?.CurrentHolderUserId ?? "None",
+                true,
+                $"probe={probeId} condition={condition} localResidualDeg={pitchResidual:0.###} " +
+                $"probePersistedLocally={pitchResidual > AccessProbePitchDegrees * 0.25f} localCleanupApplied={cleanedUp}");
+        }
+
+        // Runs alongside the release: probes on the first frame where the local participant is no longer
+        // the logical holder, the window in which it may still have native authority.
+        private IEnumerator ApplyFormerHolderProbeAfterRelease(int cycle, string formerHolderUserId)
+        {
+            float start = Time.realtimeSinceStartup;
+            while (Time.realtimeSinceStartup - start < projectConfig.automatedScenarioStepTimeoutSeconds)
+            {
+                ResolveRuntime();
+                if (!string.Equals(queueView?.CurrentHolderUserId, formerHolderUserId, StringComparison.OrdinalIgnoreCase))
+                {
+                    ApplyAccessProbe(cycle, "FormerHolderAfterRelease");
+                    yield break;
+                }
+
+                yield return null;
+            }
+        }
+
+        // Probes on the first frame where the local participant observes itself as the logical holder,
+        // before native authority can have arrived.
+        private IEnumerator ApplyProbeWhenLocalBecomesHolder(int cycle)
+        {
+            float limit = projectConfig.automatedScenarioHoldSeconds + projectConfig.automatedScenarioStepTimeoutSeconds;
+            float start = Time.realtimeSinceStartup;
+            while (Time.realtimeSinceStartup - start < limit)
+            {
+                ResolveRuntime();
+                if (IsLocalUser(queueView?.CurrentHolderUserId))
+                {
+                    ApplyAccessProbe(cycle, "LogicalHolderBeforeNativeAuthority");
+                    yield break;
+                }
+
+                yield return null;
+            }
+        }
+
+        private IEnumerator ApplyAccessProbeAfter(float delaySeconds, int cycle, string condition, string expectedHolder)
+        {
+            yield return new WaitForSecondsRealtime(delaySeconds);
+            ResolveRuntime();
+            // Only probe if the other participant still holds; otherwise the condition no longer applies.
+            if (string.Equals(queueView?.CurrentHolderUserId, expectedHolder, StringComparison.OrdinalIgnoreCase))
+                ApplyAccessProbe(cycle, condition);
         }
 
         public static int GetMinimumExpectedPhysicalAuthorityTransfers(int completedCycles)
@@ -979,7 +1236,7 @@ namespace Thesis.Orchestration.Runtime.Scenarios
                 yield return null;
             }
 
-            string exportPath = EvaluationMetricsManager.ResolveOrCreate(this)?.ExportAll();
+            string exportPath = EvaluationMetricsManager.ResolveOrCreate(this)?.ExportAll(null, sessionView?.LocalUserId);
             if (string.IsNullOrWhiteSpace(exportPath))
             {
                 SetBenchmarkUiStatus("BENCHMARK EXPORT FAILED - do not use this run.");
