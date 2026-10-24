@@ -122,10 +122,29 @@ and scenario can be selected in batch mode with
 
 ## Pilot Coverage
 
-Earlier runs are diagnostic evidence from protocol versions up to 1.3. The
-protocol 1.4 five-backend pilot matrix is intentionally pending until every
-backend passes one two-player run for all five scenarios. Only then should the
-balanced final replicate collection begin.
+Earlier runs (22 July 2026, protocol 1.4, and the validation reruns of protocol
+1.5) are retained as historical and diagnostic data and are not pooled with
+later data. The revision protocol 1.6 was checked in three steps, each a
+separate dataset with its own software freeze (git tags), player builds and
+ledger of every attempt:
+
+- Pilot (23 October 2026): 5 backends x 5 scenarios x 3 attempts, 75 of 75
+  valid; a software check of the whole chain from build to analysis.
+- Campaign A (24 October 2026, tag `freeze-protocol-1.6`): 10 balanced blocks of
+  all 25 cells, 250 attempts, 248 valid executions by the two-export definition.
+  Its per-phase records exposed defects in the Mirror, PUN2 and Netcode adapters
+  that the earlier single final-rotation check could not show.
+- Campaign B (24-25 October 2026, tag `freeze-protocol-1.6-b`) after the
+  fixes: 250 attempts, 249 valid executions (one PUN2 attempt: the two processes
+  selected different Photon regions), orientation error exactly 0 degrees at all
+  9,200 phase-boundary rows on both replicas of all five backends; plus 25
+  access-control probe attempts and 75 lifecycle attempts (all passed).
+
+The design, outcome definitions, exclusion rules and sample-size reasoning are
+in the campaign plan; every attempt, including failures, is kept. These runs
+use one machine, two headless processes and no network impairment (the
+co-located profile), so they say nothing about Internet conditions or about
+timing differences between local and cloud backends.
 
 The pilot topology was:
 

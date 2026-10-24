@@ -1,11 +1,16 @@
 # Backend Conformance Table - Revision Protocol 1.6
 
 What the orchestration contract requires of a backend adapter, how each of the
-five audited adapters meets it, and where it does not. "Run" means a two-process
-smoke run on one machine (Netcode, Mirror, FishNet: local; PUN2, Fusion: Photon
-Cloud), 21-22 October 2026, one run per entry unless stated. These are software
-checks, not measurements, and say nothing about performance. "Source" means
-read from the adapter code without a run.
+five audited adapters meets it, and where it does not. "Run" means two-process
+runs on one machine (Netcode, Mirror, FishNet: local; PUN2, Fusion: Photon
+Cloud) of the revision software (tag `freeze-protocol-1.6-b`, 24-25 October 2026):
+the lifecycle cases were run 3 times per backend and case (75 of 75 passed), the
+access-control probes 5 times per backend (counts in section 3), and the
+scripted benchmark scenarios S1-S5 10 times per backend and scenario (249 of 250
+executions valid). Entries marked "Run" for other behavior were first checked in
+single smoke runs on 21-22 October 2026. These are software checks and
+counts, not performance claims. "Source" means read from the adapter code
+without a run.
 
 Audited SDKs: Netcode for GameObjects 2.11.0, Mirror 96.0.1, FishNet 4.6.22,
 Photon PUN 2 2.55, Photon Fusion 2.0.9 (build 1566, Shared mode).
@@ -37,13 +42,13 @@ tested (see `ACCESS_CONTROL_AND_IDENTITY.md`).
 | Ordering | Authoritative arrival order | same | same | same | same |
 | Duplicate request / holder re-request | Denied, no duplicate queue entry (shared logic, `tests/QueueCore`) | same | same | same | same |
 | Replication of queue state | NetworkVariables | ClientRpc + TargetRpc on spawn | ObserversRpc (buffered) | Buffered PunRPC | `[Networked]` properties |
-| Near-concurrent requests (10 rounds, both orders of arrival observed) | Run: all granted once, no duplicate | Run | Run | Run | Run |
-| Late join receives current state | Run | Run | Run | Run | Run |
+| Near-concurrent requests (10 rounds, both orders of arrival observed) | Run, 3/3 attempts: all granted once, no duplicate | Run, 3/3 | Run, 3/3 | Run, 3/3 | Run, 3/3 |
+| Late join receives current state | Run, 3/3 attempts | Run, 3/3 | Run, 3/3 | Run, 3/3 | Run, 3/3 |
 | Waiting participant leaves | Run (entry removed) | Run | Run | Run | Run |
-| Holder leaves abruptly while another waits | Run: next participant granted | Run | Run | Run | Run |
-| Rejoin after leaving | Run: new identity, queued as new arrival | Run | Run | Run | Run |
-| Queue authority leaves abruptly while another waits | Session ends (outcome `SessionEnded`) | Session ends | Session ends | Session continues; new master restores the queue from the replicated snapshot, waiting participant granted | Session continues; new state authority restores the queue, waiting participant granted |
-| Abrupt departure detected after (upper bound, one run) | ~31 s | ~11 s | ~61 s | ~10 s | ~12 s |
+| Holder leaves abruptly while another waits | Run, 3/3: next participant granted | Run, 3/3 | Run, 3/3 | Run, 3/3 | Run, 3/3 |
+| Rejoin after leaving | Run, 3/3: new identity, queued as new arrival | Run, 3/3 | Run, 3/3 | Run, 3/3 | Run, 3/3 |
+| Queue authority leaves abruptly while another waits (3 attempts each) | Session ends (outcome `SessionEnded`) 3/3 | Session ends 3/3 | Session ends 3/3 | Session continues; new master restores the queue from the replicated snapshot, waiting participant granted 3/3 | Session continues; new state authority restores the queue, waiting participant granted 3/3 |
+| Abrupt departure detected after (upper bound, median of 3 attempts) | 30.8 s | 11.1 s | 61.4 s | 9.6 s | 11.5 s |
 
 Notes. In the holder-leaves case the waiting participant was granted by the
 holder's idle timeout before the departure was detected on all five backends.
@@ -57,9 +62,9 @@ times are the time to observe the departure, not a guaranteed bound.
 | --- | --- | --- | --- | --- | --- |
 | Native authority object | Root `NetworkObject` owner | Root `NetworkIdentity` owner | Root `NetworkObject` owner | `PhotonView` owner (root and optional child) | State authority of root and eligible children |
 | Arbitration of who may take it | Server grants only to the logical holder; server removes other owners after a 1 s grace | same | same | None: `OwnershipOption.Takeover` | None: `AllowStateAuthorityOverride` |
-| Unauthorized write by a non-holder (gate bypassed, one run, 12 probes) | Not propagated | Not propagated | Not propagated | Not propagated | Not propagated |
-| Master/host write before first grant | Not propagated | Not propagated | Not propagated | Propagated 1/2 | Not propagated |
-| Holder's write before native authority arrived | Published after acquisition 1/5 | 1/5 | 1/5 | 0/5 | 1/5 |
+| Unauthorized write by a non-holder or former holder (gate bypassed; 60 probes in 5 attempts) | Not propagated (0/60) | 0/60 | 0/60 | 0/60 | 0/60 |
+| Master/host write before first grant (10 probes) | Not propagated (0/10) | 0/10 | 0/10 | Propagated 5/10 | 0/10 |
+| Holder's write before native authority arrived (25 probes) | Published after acquisition 5/25 (first cycle of each attempt) | 5/25 | 5/25 | 0/25 | 5/25 |
 | Unauthorized write stays on the writer's own replica | Yes | Yes | Yes | No | Yes |
 | Independent observation of the local native authority | Run | Run | Run | Run | Run |
 | Observation of the other participant's native owner | Server only | Server only; clients cannot read it (`NotLocal(unobservable on client)`) | Server only | Yes | Yes |
@@ -68,8 +73,8 @@ PUN2 and Fusion declare a limitation (author decision, 20 October 2026): native
 ownership is not arbitrated by a server, access control is cooperative, and
 violations are detectable in `native_authority_observations.csv` but not
 prevented by the network layer. The same takeover configuration was used for the
-historical data, which keeps them comparable. The probe counts are one run per
-backend and are not repeated yet.
+historical data, which keeps them comparable. The probe counts are from 5 attempts
+per backend; they are counts, not rates.
 
 ## 4. Handoff completion measurement
 
@@ -92,7 +97,7 @@ the object count is recorded with each measurement.
 | Shared instrument provisioning (source) | Not audited for this table | `ConfiguredSharedObjectSpawnerMirror`, server spawn | `ConfiguredSharedObjectSpawnerFishNet`, server spawn | Not audited for this table | Not audited for this table |
 | Controlled-child transform sync component (source) | `MicroscopeChildTransformSyncNetcode` | `MicroscopeChildTransformSyncMirror` (late joiners request a snapshot) | `MicroscopeChildTransformSyncFishNet` | `SharedTransformSyncPUN2` (no dedicated child component) | `MicroscopeChildTransformSyncFusion` |
 | Cleanup on leave | Queue entry removed, holder released | same | same | same | same |
-| Handoff of the controlled transform | Owner writes a replicated snapshot; other replicas apply it | The holder's own snapshots returned by the server are ignored (they moved the holder back to an older value; found in the revision campaign) | Same guard as Mirror | The owner sends its exact final transform reliably before it requests release, replicas snap to it, and an owner's interpolation target follows its own transform (the last sample before the handoff was otherwise lost) | State authority writes, replicas read |
+| Handoff of the controlled transform | Owner writes a replicated snapshot; other replicas apply it | The holder's own snapshots returned by the server are ignored (they moved the holder back to an older value; found in the revision campaign) | Same guard as Mirror | The owner sends its exact final transform reliably before it requests release, replicas snap to it, and an owner's interpolation target follows its own transform (before this, replicas settled on a value short of the owner's final rotation; the reason inside the PUN stream was not isolated) | State authority writes, replicas read |
 | Ownership request while a local release is pending | A pending local release suppresses ownership requests (otherwise a spurious request at every handoff to the host, rejected by the server) | same | same | same | same |
 | SDK-specific defect handled by the adapter | - | Stale state for late joiners (non-buffered ClientRpc) and lost handlers after rejoin, both fixed in the adapter | SDK deactivates spawned objects of a late joiner at `Start`; the adapter re-activates them and logs `FishNetSpawnedObjectReactivated` (4 objects per late join or rejoin, 0 in the benchmark path) | `OnEnable`/`OnDisable` base calls were missing, so room callbacks never ran (fixed) | Spawn before the session scene finished loading was despawned; `IsInRoom` and spawns now wait for the scene load; the queue runtime is spawned once per session |
 
@@ -111,11 +116,14 @@ the object count is recorded with each measurement.
 - Shared-instrument provisioning and the transform-sync mechanism are listed
   from the source file layout only; their behavior is covered by the late-join
   and S1/S4 smoke runs, not described mechanism by mechanism here.
-- Repetition: each "Run" above is a single smoke run. The pilot and campaign
-  provide repeated runs and the valid-execution proportion.
-- Behavior under packet delay, loss or reordering; more than two participants.
-- Photon Cloud behavior from different regions (the cloud runs used one
-  machine and the best region at connect).
+- Larger repetition: 3 (lifecycle) or 5 (probes) attempts per backend and case
+  show stable counts, not rates; the valid-execution proportion of the scripted
+  scenarios is 249 of 250 (10 per cell, one PUN2 attempt failed because the two
+  processes selected different Photon regions).
+- Behavior under packet delay, loss or reordering; more than two participants;
+  a second machine.
+- Photon Cloud region: processes choose the best region at connect time; a
+  fixed region option does not exist in this revision (see the failed attempt above).
 - Identity spoofing by a modified client.
 
 ## Where each row is checked
@@ -123,4 +131,5 @@ the object count is recorded with each measurement.
 `LifecycleScenarioDriver` (cases HolderLeavesWhileOtherWaits, QueueAuthorityLeaves,
 LateJoin, LeaveAndRejoin, NearConcurrentRequests), the W03 access probes,
 `tests/QueueCore`, `tests/AuthorityLifecycle` and
-`tools/analyze_session_invariants.py`; see `tests/README.md`.
+`tools/analyze_session_invariants.py`, `tools/analyze_campaign.py`,
+`tools/analyze_probe_runs.py` and `tools/analyze_lifecycle.py`; see `tests/README.md`.

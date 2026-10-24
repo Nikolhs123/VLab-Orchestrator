@@ -1,7 +1,8 @@
 # Access Control And Participant Identity - Revision Protocol 1.6
 
-This describes the revision source. It is not yet backed by multi-process Unity
-runs; it records what the code enforces, where, and what it does not enforce.
+This describes the revision source (tag `freeze-protocol-1.6-b`). It records what
+the code enforces, where, and what it does not enforce, and the result of the
+repeated two-process probe runs below.
 
 ## Layers
 
@@ -100,33 +101,37 @@ remained locally (then removes it locally). Propagation is detected in the other
 participant's 10 Hz transform samples by the exact signature, joined by phase
 index without comparing clocks (`tools/analyze_access_probes.py`).
 
-Observed in one two-process smoke run per backend (same machine, 19 probes per
-run; not yet repeated):
+Observed in 5 two-process attempts per backend (Campaign B players, same machine,
+19 probes per attempt, 475 probes; `tools/analyze_probe_runs.py`). An earlier
+single smoke run per backend gave the same counts per attempt:
 
-| Condition | Netcode | Mirror | FishNet | PUN2 | Fusion |
+| Condition (probes over 5 attempts) | Netcode | Mirror | FishNet | PUN2 | Fusion |
 | --- | --- | --- | --- | --- | --- |
-| Non-holder during other's hold: propagated | 0/6 | 0/6 | 0/6 | 0/6 | 0/6 |
-| Former holder after release: propagated | 0/6 | 0/6 | 0/6 | 0/6 | 0/6 |
-| (of which prober still had native authority) | 4 | 3 | 4 | 4 | 6 |
-| Before first grant: propagated | 0/2 | 0/2 | 0/2 | 1/2 | 0/2 |
-| Logical holder before native authority: published after acquisition | 1/5 | 1/5 | 1/5 | 0/5 | 1/5 |
-| Non-holder write remained on prober's own replica after 1 s | 6/6 | 6/6 | 6/6 | 0/6 | 6/6 |
+| Non-holder during other's hold: propagated | 0/30 | 0/30 | 0/30 | 0/30 | 0/30 |
+| Former holder after release: propagated | 0/30 | 0/30 | 0/30 | 0/30 | 0/30 |
+| (of which the prober still had native authority) | 20 | 18 | 20 | 22 | 30 |
+| Before first grant: propagated | 0/10 | 0/10 | 0/10 | 5/10 | 0/10 |
+| Logical holder before native authority: published after acquisition | 5/25 | 5/25 | 5/25 | 0/25 | 5/25 |
+| Gate permitted the write of a logical holder without native authority | 25/25 | 25/25 | 25/25 | 0/25 | 0/25 |
+| Non-holder write remained on prober's own replica after 1 s | 30/30 | 30/30 | 30/30 | 0/30 | 30/30 |
 
 Interpretation, limited to these runs: no participant without logical access
-changed the shared state on Netcode, Mirror, FishNet or Fusion, including while
-it still held native authority; on PUN2 the master client propagated a write
-while owning the unowned scene object without logical access (consistent with
-the cooperative model above). A logical holder's write made before native
-authority arrived was sometimes published once authority arrived (first cycle
-only in these runs). On every backend except PUN2, an unauthorized local write
-was not corrected on the writer's own replica until the next replicated change,
-so that participant's view diverged from the shared state.
+changed the shared state of the other participant on any backend, including
+110 former-holder probes made while the writer still had native authority; the
+exception is the PUN2 master client, which propagated a write made before the
+first grant in 5 of 10 probes (once per attempt) while owning the unowned scene
+object without logical access (consistent with the cooperative model above). A
+logical holder's write made before native authority arrived was published once
+authority arrived in the first cycle of each attempt (5 of 25 probes) on Netcode,
+Mirror, FishNet and Fusion. On every backend except PUN2, an unauthorized local
+write was not corrected on the writer's own replica until the next replicated
+change, so that participant's view diverged from the shared state.
 
-Evidence: probe CSVs retained with the revision materials; repeated runs are
-part of the campaign.
+Evidence: probe CSVs and summary in the revision materials (`campaign_B/probes`).
+These are counts of 5 repeated attempts per backend, not rates with an interval.
 
 ## Not Yet Demonstrated
 
-- Repetition of the probe runs; identity spoofing attempts by a modified client.
+- Identity spoofing attempts by a modified client.
 - Behavior under real packet delay or reordering.
 - Any guarantee for PUN2/Fusion beyond detection.

@@ -43,6 +43,20 @@ with `-vlabLifecycle <case>` runs one case and writes assertions to
 
 These are software checks, not measurements.
 
+## Analysis Tools For Repeated Runs
+
+- `tools/analyze_campaign.py`: per attempt and per backend-scenario cell, the
+  valid-execution definition (both exports, no failed required assertion, clean
+  FCFS replay, counts reconciled), transfer durations, grant delay, per-phase
+  orientation agreement and frame time, with exact binomial and bootstrap
+  intervals.
+- `tools/analyze_probe_runs.py`: repeated access-control probe attempts, counts
+  per backend and condition.
+- `tools/analyze_lifecycle.py`: repeated lifecycle attempts, passes, outcomes and
+  departure-detection times per backend and case.
+- `tools/annotate_handoff.py`: annotated record of one ownership phase (request,
+  grant, authority acquisition, manipulation, release, next grant).
+
 ## Session Invariants Over Exports
 
 ```powershell

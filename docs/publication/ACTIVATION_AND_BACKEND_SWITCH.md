@@ -127,9 +127,23 @@ Changes when the backend is switched (`-vlabBackend Mirror` to
    port range of the direct-connect orchestrator.
 4. The SDK must be present in the project (all five, see section 2).
 
-What is not demonstrated here: a recorded diff of the authored assets between
-the two selections. It will be added from the integration project after the
-pilot (the project is in use for the pilot runs).
+Recorded diff (25 October 2026, Campaign B software, scenario S1): selecting
+Mirror and then Fusion with the batch command above and comparing 36 authored
+files (`Assets/Resources`, `Assets/Scenes`, `ProjectSettings`, without `.meta`),
+exactly 4 files differ and nothing else:
+
+| File | Change |
+| --- | --- |
+| `Resources/VLabOrchestrator/OrchestrationProjectConfig.asset` | `backendType: 4` (Mirror) to `1` (Fusion) |
+| `Resources/AIMultiplayerAssistant/OrchestrationProjectConfig.asset` | the same single field |
+| `Resources/AIMultiplayerAssistant/SoftwareXSharedInstrument.prefab` | the Mirror components of the instrument (network identity, access controller, child sync, gate) are replaced by the Fusion ones (network object with the instrument's nested object, access controller, child sync, gate) |
+| `Resources/AIMultiplayerAssistant/NetworkAvatar.prefab` | the Mirror network identity, transform sync and name sync are replaced by the Fusion ones |
+
+The scene (`Assets/Scenes`), the project settings and all application scripts
+are byte-identical between the two selections. The Photon App ID needed by Fusion
+is a separate setting in the Photon settings asset and was not part of this
+comparison. The complete diff is in the revision materials
+(`switch_example/mirror_vs_fusion_asset_diff.txt`).
 
 ## 5. What the answer to the reviewers can and cannot say
 
