@@ -111,7 +111,20 @@ namespace Thesis.Orchestration.Backends.Mirror
         [global::Mirror.ClientRpc]
         private void RpcApplyReplicatedSnapshot(string snapshot)
         {
+            // The logical holder is the writer of this state. The broadcast also reaches the submitting
+            // client, delayed by the round trip; applying that echo moves the holder's transform back to an
+            // older value, which Update() then submits again as if it were new. Observed in the revision
+            // campaign: with unlucky frame timing the holder's rotation stayed at its start value for the
+            // whole phase (Mirror S1/S4). The holder never applies remote snapshots of its own controlled children.
+            if (HoldsLocalAuthority())
+                return;
+
             ApplySnapshot(snapshot);
+        }
+
+        private bool HoldsLocalAuthority()
+        {
+            return accessController != null && accessController.HasLocalAccess;
         }
 
         private void ApplyAuthoritativeSnapshot(string snapshot)

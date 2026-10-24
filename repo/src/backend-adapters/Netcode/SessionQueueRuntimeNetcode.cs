@@ -261,6 +261,7 @@ namespace Thesis.Orchestration.Backends.Netcode
 
             string userId = GetLocalUserId();
             TLog("ReleaseRequested", userId, CurrentInstrumentId, "Local player requested release.");
+            Thesis.Orchestration.SharedSync.LocalReleaseIntent.Mark();
             ReleaseAccessServerRpc(userId, CurrentInstrumentId);
         }
 

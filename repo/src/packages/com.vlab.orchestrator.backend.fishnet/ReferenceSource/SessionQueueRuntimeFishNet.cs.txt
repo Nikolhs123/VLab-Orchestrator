@@ -204,6 +204,7 @@ namespace Thesis.Orchestration.Backends.FishNet
 
             string userId = GetLocalUserId();
             TLog("ReleaseRequested", userId, currentInstrumentId, "Local player requested release.");
+            Thesis.Orchestration.SharedSync.LocalReleaseIntent.Mark();
 
             if (IsServerInitialized)
                 HandleReleaseAccess(userId);

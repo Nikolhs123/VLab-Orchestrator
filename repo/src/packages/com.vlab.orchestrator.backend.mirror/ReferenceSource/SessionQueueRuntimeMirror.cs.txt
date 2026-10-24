@@ -235,6 +235,7 @@ namespace Thesis.Orchestration.Backends.Mirror
 
             string userId = GetLocalUserId();
             TLog("ReleaseRequested", userId, currentInstrumentId, "Local player requested release.");
+            Thesis.Orchestration.SharedSync.LocalReleaseIntent.Mark();
 
             if (isServer)
                 HandleReleaseAccess(userId);

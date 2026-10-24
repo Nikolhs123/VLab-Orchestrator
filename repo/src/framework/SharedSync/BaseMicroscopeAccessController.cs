@@ -62,7 +62,8 @@ namespace Thesis.Orchestration.SharedSync
 
             SetLocalAccess(shouldHaveAccess);
 
-            if (shouldHaveAccess && RequiresAuthorityTransfer())
+            // While the local participant's own release is in flight it must not ask for ownership back.
+            if (shouldHaveAccess && RequiresAuthorityTransfer() && !LocalReleaseIntent.IsPending())
             {
                 RequestAuthorityIfNeeded();
             }
@@ -74,6 +75,8 @@ namespace Thesis.Orchestration.SharedSync
                 return;
 
             HasLocalAccess = hasAccess;
+            if (!hasAccess)
+                LocalReleaseIntent.Clear();
 
             if (sharedDefinition != null)
             {

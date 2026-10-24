@@ -258,6 +258,12 @@ namespace Thesis.Orchestration.Backends.PUN2
 
             string userId = GetLocalUserId();
             TLog("ReleaseRequested", userId, currentInstrumentId, "Local player requested release.");
+            Thesis.Orchestration.SharedSync.LocalReleaseIntent.Mark();
+
+            // Send the final transform state before the release, on the same reliable ordered stream, so the
+            // next holder's replica has it before it is granted access.
+            SharedTransformSyncPUN2.FlushOwnedFinalState();
+
             cachedPhotonView.RPC(nameof(RPC_ReleaseAccess), RpcTarget.MasterClient, userId);
         }
 

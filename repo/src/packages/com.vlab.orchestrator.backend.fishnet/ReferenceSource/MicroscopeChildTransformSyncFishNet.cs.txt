@@ -105,6 +105,12 @@ namespace Thesis.Orchestration.Backends.FishNet
         [ObserversRpc(BufferLast = true, RunLocally = true)]
         private void RpcApplyReplicatedSnapshot(string snapshot)
         {
+            // The logical holder is the writer; the broadcast also reaches the submitting client after a round
+            // trip and would move the holder's transform back to an older value (see the Mirror adapter, where
+            // this stalled the holder's rotation). The holder never applies remote snapshots of its own children.
+            if (accessController != null && accessController.HasLocalAccess)
+                return;
+
             ApplySnapshot(snapshot);
         }
 

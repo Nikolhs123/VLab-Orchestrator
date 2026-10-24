@@ -80,3 +80,6 @@ NetworkProjectConfig.fusion
 # Written before every player build by BuildProvenanceRecorder
 /repo/src/showcase/UnityProject/Assets/Resources/VLabOrchestrator/BuildProvenance.txt
 /repo/src/showcase/UnityProject/Assets/Resources/VLabOrchestrator/BuildProvenance.txt.meta
+
+__pycache__/
+*.pyc
