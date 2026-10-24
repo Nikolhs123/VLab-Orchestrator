@@ -113,6 +113,80 @@ client)`. Every participant now exports its own records: the coordinator under
 `participant_identity.csv`. Records from different participants must be aligned
 by event sequence or a shared reference, not by subtracting their clocks.
 
+## Protocol 1.5: Abandoned Request Timestamps (historical change)
+
+**What 1.5 changed** (commit 154af92, `CHANGELOG.md` "Protocol 1.5"): when local
+logical access is revoked before physical ownership completes, the pending
+Netcode authority-transfer measurement is cancelled
+(`AuthorityTransferRecorder.CancelPendingTransfer`), so a later ownership
+completion cannot inherit the request timestamp of a previous benchmark cycle.
+Exports produced after the change are versioned 1.5 so they are not pooled with
+the 1.4 candidate matrix. The same pending-request table existed before; what was
+missing was removing an abandoned entry.
+
+**Where the effect is visible in retained data.** The candidate batch
+(`data/candidate/.../UnityNetcode`, protocol 1.4, 22 July 2026) and the targeted
+reruns (`data/validation/protocol-1.5-anomaly-validation-2026-07-23/UnityNetcode`,
+protocol 1.5) are separate datasets; the reruns are validation, not additional
+independent samples. One run each, `authority_transfers.csv`
+`transfer_latency_ms` (the rows alternate between a request observed by this
+process and a completion without a locally observed request, recorded as 0):
+
+| Run | Transfers | Observed durations (ms) | Mean (ms) |
+| --- | --- | --- | --- |
+| 1.4 candidate, S1 (10 s hold) | 5 | 18.5, 11099.4, 11100.0; two rows 0 | 7405.9 |
+| 1.5 rerun, S1 | 5 | 17.2, 16.2, 16.8, 0.5; one row 0 | 12.7 |
+| 1.4 candidate, S3 (2.5 s hold) | 19 | 18.1, 1.0 and nine values 2832.6-2841.8; the other rows 0 | 2323.6 |
+| 1.5 rerun, S3 | 19 | 15.9-17.8 and 0.5; the other rows 0 | 15.3 |
+
+In the 1.4 runs the large values are of the order of the preceding hold time
+(10 s and 2.5 s) instead of tens of milliseconds, which is what a timestamp
+taken at an earlier request and not discarded would produce. This is consistent
+with the stated cause; it does not prove it for each row, because the 1.4 files
+carry no measurement identifiers (introduced later). The difference must not be
+read as an improvement of Netcode networking performance: both are the same
+code path with a bookkeeping error removed, and 1.4 values that include the
+stale timestamp are measurement errors, kept as historical data and not
+corrected.
+
+**Annotated record (1.4 candidate, S1, `Run_20260722_214040_350`, third row of
+`authority_transfers.csv`, joined with the same run's `queue_transitions.csv`).**
+All stamps are from one machine and are used here only to read the record; they
+are not a general way to compute durations.
+
+| UTC (21:41:..) | File | Event |
+| --- | --- | --- |
+| 12.923 | queue_transitions | Client_1 released, Client_0 granted |
+| 12.932 | authority_transfers | Row 3 `transfer_requested_utc`: a transfer request for logical holder Client_1 is recorded, although Client_1 is not the holder |
+| 13.965 | queue_transitions | Client_1 requests access, queued behind Client_0 (1.03 s after the recorded transfer request) |
+| 23.973 | queue_transitions | Client_0 released, Client_1 granted |
+| 24.031 | authority_transfers | Row 3 `transfer_completed_utc`: Client_1 becomes owner, 58 ms after its grant; recorded duration 11099.4 ms |
+
+The request timestamp precedes Client_1's own access request by about one
+second and its grant by about 11 s, so the recorded duration measures the time
+since an abandoned earlier request, not the ownership handoff that followed the
+grant. In the protocol 1.5 rerun the same row type shows 16-17 ms. Row 5 of the
+same run (11099.96 ms) shows the same pattern.
+
+**Regression coverage today** (`tests/AuthorityLifecycle/Program.cs`):
+
+- cancel then new request for the same object and holder: the canceled request
+  leaves no pending entry, the new request gets a different measurement ID, the
+  completion is attributed to the new request and not to the abandoned one, and
+  a `Canceled` lifecycle row is written (the first block of `Main`);
+- measurement-scoped terminal events: a delayed completion of a canceled
+  measurement is rejected as `StaleTerminalRejected` and does not close the newer
+  one; a delayed native callback after cancel is journaled as
+  `LateObservationIgnored` and creates no completion.
+
+Limits: this regression exercises the recorder and tracker with stand-ins, not a
+Unity Netcode run; the specific cancel-then-re-request check was not
+mutation-tested (two other mutations were, see below). In the current revision
+protocol 1.6 the measurement-ID mechanism supersedes the 1.5 key-based removal.
+SDK ownership callbacks carry no request token, so after a cancel and a new
+request for the same object, an observed local authority is attributed to the
+newer request (documented above).
+
 ## Executed Recorder Regression
 
 `dotnet run --project tests/AuthorityLifecycle/AuthorityLifecycle.csproj`
