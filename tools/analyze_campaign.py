@@ -284,6 +284,8 @@ def main():
     parser.add_argument("--ledger", required=True)
     parser.add_argument("--exports", nargs="+", required=True)
     parser.add_argument("--out", required=True)
+    parser.add_argument("--logs-root", default="",
+                        help="folder with the run-log folders; run_logs of the ledger are remapped to it by folder name")
     parser.add_argument("--room-prefix", default="phaseb-",
                         help="room name prefix of the campaign (phaseb- for A and B, phasec- for C)")
     args = parser.parse_args()
@@ -291,7 +293,13 @@ def main():
 
     replay = load_replay()
     exports = index_exports(args.exports)
-    attempts = [analyze_attempt(row, exports, replay) for row in read_csv(args.ledger)]
+    rows = read_csv(args.ledger)
+    if args.logs_root:
+        for row in rows:
+            name = re.split(r"[\\/]", row.get("run_logs", "").rstrip("\\/"))[-1]
+            if name:
+                row["run_logs"] = str(pathlib.Path(args.logs_root) / name)
+    attempts = [analyze_attempt(row, exports, replay) for row in rows]
     cells = summarize(attempts)
 
     out = pathlib.Path(args.out)

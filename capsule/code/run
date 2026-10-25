@@ -1,0 +1,4 @@
+#!/usr/bin/env bash
+set -e
+cd /code
+python3 reproduce.py --data /data --results /results --tools /code/tools
