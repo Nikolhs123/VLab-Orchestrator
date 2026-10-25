@@ -21,3 +21,7 @@
 *.mat whitespace=-blank-at-eol
 *.prefab whitespace=-blank-at-eol
 *.unity whitespace=-blank-at-eol
+
+capsule/code/run text eol=lf
+capsule/code/*.py text eol=lf
+capsule/environment/Dockerfile text eol=lf
