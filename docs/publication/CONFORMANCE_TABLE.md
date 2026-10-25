@@ -111,6 +111,20 @@ the object count is recorded with each measurement.
 | Native failure callback for an authority request | Netcode, Mirror, FishNet | Timeout is the only failure signal |
 | Queue continuity when the queue authority leaves | Netcode, Mirror, FishNet | Session ends with the host |
 
+## 7. Operation contract: preconditions, expected result, completion and failure
+
+The same contract holds for all five adapters; backend differences are in
+sections 1-6. "Checked by" names the run that exercised the row.
+
+| Operation | Required initial condition | Expected result | Completion event | Failure or refusal | Checked by |
+| --- | --- | --- | --- | --- | --- |
+| Create or join a session | Backend selected; for Photon backends an App ID is configured; the room name is the same for both participants | The participant is connected, is listed with a framework identity, and a session run id is shared | Connection and participant-list events of the session view | Photon: join fails if the room is not visible (seen once, region mismatch); direct connect: no discovery, `LookupRoom` is `Unsupported` | Every attempt of the scripted scenarios (250 sessions per campaign) |
+| Leave | Participant in a session | Queue entry and holder state of the participant are removed | Participant-left event; queue snapshot without the participant | - | Lifecycle cases (leave, rejoin, holder leaves, queue authority leaves) |
+| Request access | Participant registered; queue runtime spawned on the queue authority; identity claimed equals the transport sender | Free instrument: participant becomes holder. Held instrument: participant is appended to the waiting queue | `AccessGranted` or `AccessQueued` in the queue history | Holder re-request and duplicate queued request are denied without changing the queue; a request whose claimed identity differs from the sender is rejected | `tests/QueueCore`; near-concurrent case (60 grants per backend) |
+| Release | Requesting participant is the current holder | Holder cleared and the first waiting participant is granted (FCFS) | `AccessReleased` followed by `AccessGranted` | A release by a non-holder changes nothing | Every cycle of S1-S5 |
+| Authority transfer | Logical access held; the native objects of the instrument listed in the shared-object definition | The local participant becomes the native owner (state authority on Fusion) of every requested object | Local observation of ownership (`OwnerClientId`, `isOwned`, `IsOwner`, `OnOwnershipTransfered`, `HasStateAuthority`); the measurement ends as completed | PUN 2 and Fusion report a failure callback; all backends end an unresolved measurement as timed out after 10 s; a revoked or superseded request is canceled | Authority measurement counts in every export (count identity holds) |
+| Shared-object creation | Shared-object definition with root and controlled children | A network object exists on both participants, replicated and observable (readiness check before the scenario starts) | Spawn and network-readiness events | Spawn before the session scene finished loading is despawned on Fusion (handled by the adapter) | Preflight of every attempt; late-join case |
+
 ## Not yet demonstrated
 
 - Shared-instrument provisioning and the transform-sync mechanism are listed
