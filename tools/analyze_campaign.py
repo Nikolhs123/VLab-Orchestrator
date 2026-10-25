@@ -108,9 +108,19 @@ def index_exports(roots):
     return exports
 
 
+ROOM_PREFIX = ["phaseb-"]
+
+
 def room_of(run_logs):
     match = re.search(r"_(\d{8}_\d{6})$", run_logs.rstrip("\\/"))
-    return "phaseb-" + match.group(1) if match else ""
+    return ROOM_PREFIX[0] + match.group(1) if match else ""
+
+
+def manifest_value(folder, key, default=""):
+    for row in read_csv(folder / "execution_manifest.csv"):
+        if row.get("key") == key:
+            return row.get("value", default)
+    return default
 
 
 def failed_required(folder):
@@ -174,6 +184,11 @@ def analyze_attempt(row, exports, replay):
         violations = replay(read_csv(coord / "queue_transitions.csv"))
         if violations:
             reasons.append("queue replay violations: " + str(len(violations)))
+    if coord:
+        # exports from software without the key were all produced host-first
+        out["role_order"] = manifest_value(coord, "protocol.role_order", "host-first")
+        if row.get("role_order") and row["role_order"] != out["role_order"]:
+            reasons.append("role order in manifest (" + out["role_order"] + ") differs from the ledger (" + row["role_order"] + ")")
     out["reason"] = " | ".join(reasons)
     out["valid_execution"] = not reasons
     out["log_error_lines"] = log_errors(row["run_logs"]) if row.get("run_logs") else ""
@@ -269,7 +284,10 @@ def main():
     parser.add_argument("--ledger", required=True)
     parser.add_argument("--exports", nargs="+", required=True)
     parser.add_argument("--out", required=True)
+    parser.add_argument("--room-prefix", default="phaseb-",
+                        help="room name prefix of the campaign (phaseb- for A and B, phasec- for C)")
     args = parser.parse_args()
+    ROOM_PREFIX[0] = args.room_prefix
 
     replay = load_replay()
     exports = index_exports(args.exports)
@@ -302,3 +320,4 @@ def main():
 
 if __name__ == "__main__":
     sys.exit(main())
+

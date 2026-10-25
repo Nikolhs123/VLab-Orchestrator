@@ -19,6 +19,10 @@ namespace Thesis.Orchestration.Backends.Fusion
             into["sdk"] = "Photon Fusion";
             into["sdk_assembly_version"] = typeof(NetworkRunner).Assembly.GetName().Version.ToString();
             into["room_discovery"] = "session lobby list";
+            string fixedRegion = global::Fusion.Photon.Realtime.PhotonAppSettings.TryGetGlobal(out var photonSettings) && photonSettings != null
+                ? photonSettings.AppSettings.FixedRegion
+                : null;
+            into["fixed_region_setting"] = string.IsNullOrEmpty(fixedRegion) ? "none (best region selected at connect)" : fixedRegion;
             NetworkRunner runner = ResolveSession() != null ? session.Runner : null;
             if (runner == null)
             {

@@ -99,6 +99,7 @@ namespace Thesis.Orchestration.Telemetry
             Add(values, "protocol.hold_seconds", F(config.automatedScenarioHoldSeconds));
             Add(values, "protocol.cooldown_seconds", F(config.automatedScenarioCooldownSeconds));
             Add(values, "protocol.step_timeout_seconds", F(config.automatedScenarioStepTimeoutSeconds));
+            Add(values, "protocol.role_order", Thesis.Orchestration.Runtime.Scenarios.OrchestrationRoleOrder.Name);
             Add(values, "protocol.pre_queue_next_user", config.automatedScenarioPreQueueNextUser.ToString());
             Add(values, "protocol.manipulate_child", config.automatedScenarioManipulateChildObject.ToString());
             Add(values, "protocol.manipulated_child_name", config.automatedScenarioManipulatedChildName);

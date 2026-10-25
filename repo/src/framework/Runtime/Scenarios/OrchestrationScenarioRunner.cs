@@ -1465,13 +1465,19 @@ namespace Thesis.Orchestration.Runtime.Scenarios
             if (source == null)
                 return new List<OrchestrationPlayerInfo>();
 
-            return source
+            List<OrchestrationPlayerInfo> ordered = source
                 .Where(p => p != null && !string.IsNullOrWhiteSpace(p.UserId))
                 .OrderByDescending(p => p.IsMasterClient)
                 .ThenBy(p => p.NumericId)
                 .ThenBy(p => p.UserId, StringComparer.OrdinalIgnoreCase)
                 .Take(Mathf.Max(2, projectConfig.automatedScenarioExpectedParticipants))
                 .ToList();
+
+            // -vlabRoleOrder swapped: the first user of the scenario is the non-master participant.
+            if (OrchestrationRoleOrder.IsSwapped)
+                ordered.Reverse();
+
+            return ordered;
         }
 
         private bool IsLocalUser(string userId)
