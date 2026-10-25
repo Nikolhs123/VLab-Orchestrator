@@ -91,9 +91,22 @@ VLabOrchestratorShowcase.exe -batchmode -nographics -vlabSession client -vlabRoo
    - To check a set of exports: `py tools/analyze_session_invariants.py <exports_root>`
      prints `ALL INVARIANTS HOLD` or the violated invariants.
 
-This run is a software check. The capsule or release verification of the whole
-procedure on a clean machine is **pending**; the commands above were exercised on
-the development machine only.
+This run is a software check. Partial verification (25 October 2026): the tag
+`freeze-protocol-1.6-c` was cloned into a new folder of the development machine,
+the Photon, Mirror and FishNet SDK folders were copied from the audited
+installation into the showcase project (Netcode comes through the package
+manifest), the installer was run twice, and the commands above were executed for
+Netcode, Mirror and FishNet. All three players were built, both processes exited
+with code 0, the host log ended with the status line above, and the coordinator
+summary showed `client_count=2`, `request_count=6`, `granted_count=6`,
+`released_count=6`, `authority_transfer_count=5`, `authority_transfer_success_count=5`,
+`scenario_valid=True`, `scenario_completed_cycles=3` and no failed validity
+assertion on each of the three backends. Note that the first `run_master_summary.csv`
+found in an export tree can be the participant's copy (request count 0): read the
+one in the coordinator export folder. Not covered: a second machine, the SDK
+downloads (copied, not acquired), a fresh Photon account (PUN 2 and Fusion were not
+run), and the Code Ocean capsule. The verification on a clean machine is
+therefore still **pending**.
 
 ## 4. Switching between two backends
 
