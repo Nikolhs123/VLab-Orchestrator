@@ -96,7 +96,7 @@ This run is a software check. Partial verification (25 October 2026): the tag
 the Photon, Mirror and FishNet SDK folders were copied from the audited
 installation into the showcase project (Netcode comes through the package
 manifest), the installer was run twice, and the commands above were executed for
-Netcode, Mirror and FishNet. All three players were built, both processes exited
+Netcode, Mirror, FishNet, PUN 2 and Fusion. All five players were built, both processes exited
 with code 0, the host log ended with the status line above, and the coordinator
 summary showed `client_count=2`, `request_count=6`, `granted_count=6`,
 `released_count=6`, `authority_transfer_count=5`, `authority_transfer_success_count=5`,
@@ -104,8 +104,8 @@ summary showed `client_count=2`, `request_count=6`, `granted_count=6`,
 assertion on each of the three backends. Note that the first `run_master_summary.csv`
 found in an export tree can be the participant's copy (request count 0): read the
 one in the coordinator export folder. Not covered: a second machine, the SDK
-downloads (copied, not acquired), a fresh Photon account (PUN 2 and Fusion were not
-run), and the Code Ocean capsule. The verification on a clean machine is
+downloads (copied, not acquired; the copied Photon folders carried the existing
+Photon App IDs, so a fresh Photon account was not exercised), and the Code Ocean capsule. The verification on a clean machine is
 therefore still **pending**.
 
 ## 4. Switching between two backends
