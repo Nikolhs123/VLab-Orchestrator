@@ -69,6 +69,8 @@ times are the time to observe the departure, not a guaranteed bound.
 | Independent observation of the local native authority | Run | Run | Run | Run | Run |
 | Observation of the other participant's native owner | Server only | Server only; clients cannot read it (`NotLocal(unobservable on client)`) | Server only | Yes | Yes |
 
+Note on the PUN 2 child sync. The class comment of `SharedTransformSyncPUN2` explains the handoff fix with the statement that PUN streams stop when ownership moves and lose the last changes. That is the design rationale, not a proven mechanism: the cause inside the PUN stream was not isolated (see the campaign analysis); the explicit final-state send does not depend on it. The source file is kept byte-identical to the measured builds, so its hash matches the manifests of the campaigns.
+
 PUN2 and Fusion declare a limitation (author decision, 20 October 2026): native
 ownership is not arbitrated by a server, access control is cooperative, and
 violations are detectable in `native_authority_observations.csv` but not

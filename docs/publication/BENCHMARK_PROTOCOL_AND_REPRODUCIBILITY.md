@@ -139,6 +139,7 @@ ledger of every attempt:
   selected different Photon regions), orientation error exactly 0 degrees at all
   9,200 phase-boundary rows on both replicas of all five backends; plus 25
   access-control probe attempts and 75 lifecycle attempts (all passed).
+- Campaign C (25 October 2026, tag `freeze-protocol-1.6-c`): freeze B plus two options that are off by default, `-vlabRoleOrder swapped` (the non-master participant plays the first user) and `-vlabPhotonRegion <code>` (fixed Photon region for PUN2 and Fusion). A regression part with default options (25 attempts, 25 valid) and a swapped part (125 attempts, 5 per cell, region eu for PUN2 and Fusion): 125 of 125 valid executions, orientation error exactly 0 degrees at every phase-boundary row, one canceled authority measurement (Fusion, open-loop stress). Lifecycle cases and probes were not repeated with swapped roles. The first start of the regression part ran no player because of a driver argument error; those 25 ledger rows are kept as a separate file and the part was started again.
 
 The design, outcome definitions, exclusion rules and sample-size reasoning are
 in the campaign plan; every attempt, including failures, is kept. These runs
