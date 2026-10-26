@@ -31,8 +31,8 @@ require a clean publication commit and version tag before final data collection.
 | Shared-object access and synchronization | Implemented and exercised in the V-Lab |
 | Runtime bootstrap and editor configuration | Implemented and code-audited |
 | Automated benchmark scenarios | Implemented; five protocol presets exist |
-| Pilot benchmark coverage | Protocol 1.1-1.3 diagnostic runs retained; protocol 1.4 acceptance matrix pending |
-| Statistical evidence for final paper | Not complete; replicated final runs are still required |
+| Benchmark coverage | Historical protocol 1.1-1.5 runs retained; protocol 1.6: pilot, Campaigns A, B and C (see BENCHMARK_PROTOCOL_AND_REPRODUCIBILITY.md) |
+| Repeated executions | Two campaigns of 250 attempts, a role-swapped campaign of 150 attempts, 25 probe and 75 lifecycle attempts; descriptive, one machine |
 | Automated tests | Core/preset edit-mode tests and build-time backend asset validation implemented |
 | Standalone package | Extracted into this rights-cleared publication repository |
 | Third-party redistribution rights | Vendor SDKs are excluded from redistribution and installed separately |

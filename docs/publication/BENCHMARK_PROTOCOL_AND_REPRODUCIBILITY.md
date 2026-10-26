@@ -3,8 +3,8 @@
 ## Implemented Protocol
 
 The current revision source uses protocol version 1.6, with revised authority
-measurement instrumentation. Its Unity/SDK integration validation and revised
-measurement campaign are pending. Published historical results remain under
+measurement instrumentation. Its Unity/SDK integration validation and the revised
+measurement campaigns (A, B, C) are described under Pilot Coverage. Published historical results remain under
 their original protocol versions. See [authority measurement semantics](AUTHORITY_MEASUREMENT_SEMANTICS.md).
 The same scenario runner,
 assertion model, and export pipeline operate above all five networking backends.
