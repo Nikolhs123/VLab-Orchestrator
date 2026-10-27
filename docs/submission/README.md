@@ -1,5 +1,10 @@
 # SoftwareX Submission Documents
 
+> Historical preparation documents. The SoftwareX submission was not completed
+> because APC funding was unavailable. These files are retained for provenance;
+> they are not the current IEEE Access submission instructions. See
+> [publication history](../publication/PUBLICATION_HISTORY.md).
+
 These files accompany the SoftwareX manuscript for VLab Orchestrator. They are
 editable source copies; generate or upload Word documents where Editorial
 Manager requests an editable file.
